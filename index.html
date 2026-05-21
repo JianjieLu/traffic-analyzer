@@ -353,35 +353,52 @@ document.addEventListener('keydown', (e) => {
 
 
 function parsePlated(lines) {
-    platedFrames = [];
-    platedTrajMap.clear();
+    let errorCount = 0;
     console.log('开始解析上牌数据，行数:', lines.length);
 
     lines.forEach((line, idx) => {
-        const trimmed = line.trim();
+        let trimmed = line.trim();
         if (!trimmed) return;
+
+        // 🛠️ 核心修复逻辑：动态检测并自动修复被截断的长 JSON 行
+        if (trimmed.startsWith('{') && !trimmed.endsWith('}')) {
+            console.warn(`检测到第 ${idx + 1} 行不完整，正在尝试自动修复闭合结构...`);
+            
+            // 补齐未闭合的数组和对象结构
+            if (trimmed.includes('"pathList": [') && !trimmed.endsWith(']}')) {
+                // 如果截断处正好在某个车辆对象的属性中间，先干掉最后那个不完整的对象
+                let lastObjStart = trimmed.lastIndexOf('{');
+                let lastListStart = trimmed.lastIndexOf('"pathList": [');
+                if (lastObjStart > lastListStart) {
+                    trimmed = trimmed.substring(0, lastObjStart);
+                    // 移除末尾多余的逗号
+                    trimmed = trimmed.replace(/,\s*$/, '');
+                }
+                trimmed += ']}'; // 强行闭合
+            } else {
+                trimmed += '}';
+            }
+        }
+
         try {
             const data = JSON.parse(trimmed);
-            // 兼容数组格式
             if (Array.isArray(data)) {
-                console.warn('检测到数组格式，自动展开为多帧');
                 data.forEach(item => processPlatedItem(item));
             } else {
                 processPlatedItem(data);
             }
         } catch (err) {
-            console.error(`解析第${idx+1}行失败:`, trimmed.substring(0, 200), err);
+            errorCount++;
+            if (errorCount <= 5) {
+                console.error(`解析第 ${idx + 1} 行失败。截断位置提示:`, trimmed.substring(trimmed.length - 100), err);
+            }
         }
     });
 
     platedFrames.sort((a, b) => a.time - b.time);
     platedTrajMap.forEach((pts, id) => pts.sort((a, b) => a.time - b.time));
-    console.log(`上牌后轨迹解析完成: 帧数 ${platedFrames.length}, 车辆ID数 ${platedTrajMap.size}`);
-    if (platedFrames.length > 0) {
-        console.log('首帧时间:', new Date(platedFrames[0].time), '末帧时间:', new Date(platedFrames[platedFrames.length-1].time));
-    }
-}
- function parsePlatedTimeStamp(timeStr) {
+    console.log(`上牌后轨迹解析完成: 成功帧数 ${platedFrames.length}, 放弃损坏行数: ${errorCount}, 车辆ID数 ${platedTrajMap.size}`);
+} function parsePlatedTimeStamp(timeStr) {
             const parts = timeStr.split(' ');
             const datePart = parts[0];
             const timePart = parts[1];
