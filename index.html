@@ -487,12 +487,25 @@ function processPlatedItem(data) {
 async function autoLoadAllData() {
     document.getElementById('loadStatus').innerText = "正在从服务器加载数据...";
     
-    // 填入你的所有文件名列表
+    // 你的所有分片列表
     const dataFiles = {
-        raster: [ 'data/Tr_fiber_521_part1.jsonl', 'data/Tr_fiber_521_part2.jsonl' ], // 补充完整你的所有分片
-        gantry: [ 'data/Tr_gantry_521_part1.jsonl' ],
-        traj:   [ 'data/Tr_trajectories_521_part1.txt' ],
-        plated: [ 'data/Tr_merged_small_part1.jsonl' ]
+        raster: [
+            'data/Tr_fiber_521_part1.jsonl', 'data/Tr_fiber_521_part2.jsonl',
+            'data/Tr_fiber_521_part3.jsonl', 'data/Tr_fiber_521_part4.jsonl',
+            'data/Tr_fiber_521_part5.jsonl', 'data/Tr_fiber_521_part6.jsonl',
+            'data/Tr_fiber_521_part7.jsonl'
+        ],
+        gantry: [ 
+            'data/Tr_gantry_521_part1.jsonl' 
+        ],
+        traj: [ 
+            'data/Tr_trajectories_521_part1.txt', 'data/Tr_trajectories_521_part2.txt' 
+        ],
+        plated: [ 
+            'data/Tr_merged_small_part1.jsonl', 'data/Tr_merged_small_part2.jsonl',
+            'data/Tr_merged_small_part3.jsonl', 'data/Tr_merged_small_part4.jsonl',
+            'data/Tr_merged_small_part5.jsonl', 'data/Tr_merged_small_part6.jsonl'
+        ]
     };
 
     try {
@@ -517,15 +530,22 @@ async function autoLoadAllData() {
         }
         trajLoaded = true;
         
-        // 最后触发就绪检查
-        checkReady(); 
-        document.getElementById('loadStatus').innerText = "加载完成！";
+        // 读取上牌轨迹
+        for(let url of dataFiles.plated) {
+            const res = await fetch(url);
+            parsePlated((await res.text()).split('\n'));
+        }
+        platedLoaded = true;
+        
+        // 全部加载完成后触发逻辑
+        checkReady();
+        onPlatedReady();
+        document.getElementById('loadStatus').innerText = "全部数据加载完成！";
     } catch (e) {
         document.getElementById('loadStatus').innerText = "加载失败：" + e.message;
         console.error(e);
     }
 }
-
 // 页面加载后自动运行
 window.onload = () => {
     autoLoadAllData();
