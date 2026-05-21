@@ -212,6 +212,10 @@
             text-align: center;
             letter-spacing: 2px;
         }
+/* 在 <style> 中添加 */
+.controls label:has(input[type="file"]) {
+    display: none;
+}
     </style>
 </head>
 <body>
@@ -415,7 +419,6 @@ function parsePlated(lines) {
         }
 
         function parseRaster(lines) {
-            frames = [];
             lines.forEach(line => {
                 if (!line.trim()) return;
                 try {
@@ -481,6 +484,52 @@ function processPlatedItem(data) {
     }
     platedFrames.push({ time: frameTime, vehicles, timeStamp: data.timeStamp, pathNum: data.pathNum });
 }
+async function autoLoadAllData() {
+    document.getElementById('loadStatus').innerText = "正在从服务器加载数据...";
+    
+    // 填入你的所有文件名列表
+    const dataFiles = {
+        raster: [ 'data/Tr_fiber_521_part1.jsonl', 'data/Tr_fiber_521_part2.jsonl' ], // 补充完整你的所有分片
+        gantry: [ 'data/Tr_gantry_521_part1.jsonl' ],
+        traj:   [ 'data/Tr_trajectories_521_part1.txt' ],
+        plated: [ 'data/Tr_merged_small_part1.jsonl' ]
+    };
+
+    try {
+        // 读取光栅
+        for(let url of dataFiles.raster) {
+            const res = await fetch(url);
+            parseRaster((await res.text()).split('\n'));
+        }
+        rasterLoaded = true;
+        
+        // 读取卡口
+        for(let url of dataFiles.gantry) {
+            const res = await fetch(url);
+            parseGantry((await res.text()).split('\n'));
+        }
+        gantryLoaded = true;
+        
+        // 读取轨迹
+        for(let url of dataFiles.traj) {
+            const res = await fetch(url);
+            parseTraj((await res.text()).split('\n'));
+        }
+        trajLoaded = true;
+        
+        // 最后触发就绪检查
+        checkReady(); 
+        document.getElementById('loadStatus').innerText = "加载完成！";
+    } catch (e) {
+        document.getElementById('loadStatus').innerText = "加载失败：" + e.message;
+        console.error(e);
+    }
+}
+
+// 页面加载后自动运行
+window.onload = () => {
+    autoLoadAllData();
+};
     document.getElementById('rasterFile').addEventListener('change', e => loadFile(e, 'raster'));
     document.getElementById('gantryFile').addEventListener('change', e => loadFile(e, 'gantry'));
     document.getElementById('trajFile').addEventListener('change', e => loadFile(e, 'traj'));
@@ -493,8 +542,6 @@ function processPlatedItem(data) {
 
 
     function parseGantry(lines) {
-        gantries = [];
-        uniqueGantries.clear();
         lines.forEach(line => {
             if (!line.trim()) return;
             try {
