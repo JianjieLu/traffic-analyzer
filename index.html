@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>光栅与卡口高级分析 | 双道路版 + 上牌后轨迹</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            margin: 0;
+            padding: 15px;
+        }
+        .panel {
+            background: #2b2b2b;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover {
+            background: #0098ff;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        input[type="file"] {
+            color: #aaa;
+            font-size: 0.85em;
+            width: 200px;
+        }
+        input[type="range"],
+        label {
+            cursor: pointer;
+        }
+        .status {
+            color: #4caf50;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+        .main-container {
+            display: flex;
+            gap: 10px;
+            position: relative;
+        }
+        canvas {
+            background: #111;
+            border: 1px solid #444;
+            border-radius: 4px;
+            display: block;
+            flex-grow: 1;
+            height: 880px;
+            cursor: grab;
+        }
+        #timeDisplay {
+            font-size: 1.1em;
+            font-family: monospace;
+            color: #ffb74d;
+            min-width: 130px;
+            text-align: right;
+        }
+        .legend {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85em;
+            margin-top: 5px;
+            color: #bbb;
+            flex-wrap: wrap;
+        }
+        .legend span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .color-box {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        #detailPanel {
+            display: none;
+            width: 420px;
+            background: #222;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 10px;
+            height: 858px;
+            overflow-y: auto;
+            box-shadow: -4px 0 10px rgba(0, 0, 0, 0.5);
+        }
+        #detailPanel h3 {
+            margin: 0 0 10px 0;
+            font-size: 1.1em;
+            color: #4fc3f7;
+            border-bottom: 1px solid #444;
+            padding-bottom: 5px;
+        }
+        #detailPanel .close-btn {
+            float: right;
+            cursor: pointer;
+            color: #aaa;
+            background: none;
+            padding: 0;
+            font-size: 1.2em;
+            margin-top: -3px;
+            border: none;
+        }
+        #detailPanel .close-btn:hover {
+            color: #fff;
+        }
+        .traj-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+            text-align: center;
+        }
+        .traj-table th,
+        .traj-table td {
+            padding: 6px 4px;
+            border: 1px solid #444;
+        }
+        .traj-table th {
+            background: #333;
+            position: sticky;
+            top: 0;
+            box-shadow: 0 2px 2px rgba(0, 0, 0, 0.5);
+        }
+        .traj-table tr:nth-child(even) {
+            background: #2a2a2a;
+        }
+        .traj-table tr:hover {
+            background: #444;
+        }
+        .toggle-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            background: #333;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        .toggle-group label:hover {
+            color: #4fc3f7;
+        }
+        .seg-header {
+            background: #005f9e !important;
+            color: #fff;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        #tooltip {
+            position: fixed;
+            display: none;
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 1000;
+            font-size: 0.85em;
+            white-space: pre;
+            border: 1px solid #4fc3f7;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+        }
+        .json-viewer {
+            text-align: left;
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.95em;
+            color: #81c784;
+            background: #111;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .detail-btn {
+            background: #4caf50;
+            padding: 3px 8px;
+            font-size: 0.85em;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #fff;
+        }
+        .detail-btn:hover {
+            background: #66bb6a;
+        }
+        .road-separator-label {
+            color: #888;
+            font-size: 13px;
+            font-style: italic;
+            text-align: center;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="tooltip"></div>
+
+<div class="panel">
+    <div class="controls">
+        <label>1. 光栅: <input type="file" id="rasterFile" accept=".jsonl"></label>
+        <label>2. 卡口: <input type="file" id="gantryFile" accept=".jsonl"></label>
+        <label>3. 轨迹集(txt): <input type="file" id="trajFile" accept=".txt"></label>
+        <label>4. 上牌轨迹(jsonl): <input type="file" id="platedFile" accept=".jsonl"></label>
+        <span id="loadStatus" class="status">请依次加载文件(1-3必填,4选填)...</span>
+    </div>
+
+    <div class="controls">
+        <button id="btnPlay" disabled>播放 / 暂停</button>
+        <button id="btnReset" disabled>重置</button>
+        <label>倍速: <input type="range" id="speedRange" min="1" max="20" value="5"></label>
+        <div style="flex-grow: 1; display: flex; align-items: center; gap: 10px;">
+            <span style="font-size:0.9em;">进度:</span>
+            <input type="range" id="progressBar" min="0" max="100" value="0" style="flex-grow: 1;" disabled>
+        </div>
+        <span id="timeDisplay">00:00:00.000</span>
+    </div>
+
+    <div class="legend">
+        <span><div class="color-box" style="background: #81c784;"></div>上方-方向1</span>
+        <span><div class="color-box" style="background: #e57373;"></div>上方-方向2</span>
+        <span><div class="color-box" style="background: rgba(255, 213, 79, 0.4);"></div>穿越段</span>
+        <span><div class="color-box" style="background: #f44336; box-shadow: 0 0 8px #f44336;"></div>闪光(断面任意设备)</span>
+        <span><div class="color-box" style="border: 2px solid #e040fb; border-radius:50%; background: transparent;"></div>异常：前后100m凭空出现</span>
+        <span><div class="color-box" style="background: #FFD54F;"></div>下方-上牌方向1</span>
+        <span><div class="color-box" style="background: #FF8A65;"></div>下方-上牌方向2</span>
+        <span><div class="color-box" style="background: #9E9E9E;"></div>下方-无车牌</span>
+    </div>
+</div>
+
+<div class="main-container">
+    <canvas id="roadCanvas" width="1200" height="880"></canvas>
+    <div id="detailPanel">
+        <button class="close-btn" onclick="closeDetailPanel()">×</button>
+        <h3 id="detailTitle">明细信息</h3>
+        <div class="toggle-group" id="vehicleToggleGroup">
+            <label><input type="radio" name="vehicleViewMode" value="near" checked onchange="switchVehicleViewMode()"> 仅看卡口附近</label>
+            <label><input type="radio" name="vehicleViewMode" value="all" onchange="switchVehicleViewMode()"> 全网分段轨迹</label>
+        </div>
+<div class="toggle-group" id="gantryToggleGroup" style="display:none;">
+    <label><input type="radio" name="gantryViewMode" value="upToNow" checked onchange="switchGantryViewMode()"> 截止当前时间</label>
+    <label><input type="radio" name="gantryViewMode" value="all" onchange="switchGantryViewMode()"> 全部上报记录</label>
+    <label style="margin-left:10px;">最近 <input type="number" id="gantrySeconds" value="5" min="1" max="60" style="width:50px;" onchange="switchGantryViewMode()"> 秒</label>
+</div>
+        <div class="toggle-group" id="platedToggleGroup" style="display:none;">
+            <label><input type="radio" name="platedViewMode" value="upToNow" checked onchange="switchPlatedViewMode()"> 截止当前时间</label>
+            <label><input type="radio" name="platedViewMode" value="all" onchange="switchPlatedViewMode()"> 全部记录</label>
+        </div>
+        <p id="detailDesc" style="font-size: 0.85em; color: #aaa; margin-top: 0px; margin-bottom: 8px;"></p>
+        <table class="traj-table" id="detailTable"></table>
+    </div>
+</div>
+
+<script>
+document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.code === 'Space') {
+        e.preventDefault();
+        document.getElementById('btnPlay').click();
+    } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        shiftTimeBy(-3000);   // 后退3秒
+    } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        shiftTimeBy(3000);    // 前进3秒
+    }else if (e.code === 'KeyA') {
+    e.preventDefault();
+    currentTime = Math.max(minTime, currentTime - 6000);
+    draw();
+} else if (e.code === 'KeyD') {
+    e.preventDefault();
+    currentTime = Math.min(maxTime, currentTime + 6000);
+    draw();
+} else if (e.code === 'KeyQ') {
+    e.preventDefault();
+    currentTime = Math.max(minTime, currentTime - 1000);
+    draw();
+} else if (e.code === 'KeyE') {
+    e.preventDefault();
+    currentTime = Math.min(maxTime, currentTime + 1000);
+    draw();
+}
+});
+    const canvas = document.getElementById('roadCanvas');
+    const ctx = canvas.getContext('2d');
+    const tooltip = document.getElementById('tooltip');
+
+    let frames = [];
+    let gantries = [];
+    let uniqueGantries = new Map();
+    let ghostIntervals = new Map();
+    let preprocessedTraj = new Map();
+
+    // 上牌后轨迹数据
+    let platedFrames = [];
+    let platedTrajMap = new Map();
+
+    let isPlaying = false;
+    let minTime = 0,
+        maxTime = 0,
+        currentTime = 0;
+    let playSpeed = 5;
+    let lastRenderTime = performance.now();
+    let animationId = null;
+    let currentRenderedFrame = null;
+    let currentRenderedPlatedFrame = null;
+
+    let currentDetailVehicle = null;
+    let currentDetailGantry = null;
+    let currentDetailPlatedVehicle = null;
+
+    let camera = { x: 0, y: canvas.height / 2 - 60, scale: 0.55 };
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let clickStart = { x: 0, y: 0 };
+
+    const progressBar = document.getElementById('progressBar');
+    const timeDisplay = document.getElementById('timeDisplay');
+    const detailPanel = document.getElementById('detailPanel');
+    const LANE_WIDTH = 20;
+    const ROAD2_CENTER_Y = 480;
+
+    function parseGantryTime(timeStr) {
+        const isoStr = timeStr.replace(' ', 'T').replace(/:(\d{3})$/, '.$1') + '+08:00';
+        return Date.parse(isoStr);
+    }
+
+
+function parsePlated(lines) {
+    platedFrames = [];
+    platedTrajMap.clear();
+    console.log('开始解析上牌数据，行数:', lines.length);
+
+    lines.forEach((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+            const data = JSON.parse(trimmed);
+            // 兼容数组格式
+            if (Array.isArray(data)) {
+                console.warn('检测到数组格式，自动展开为多帧');
+                data.forEach(item => processPlatedItem(item));
+            } else {
+                processPlatedItem(data);
+            }
+        } catch (err) {
+            console.error(`解析第${idx+1}行失败:`, trimmed.substring(0, 200), err);
+        }
+    });
+
+    platedFrames.sort((a, b) => a.time - b.time);
+    platedTrajMap.forEach((pts, id) => pts.sort((a, b) => a.time - b.time));
+    console.log(`上牌后轨迹解析完成: 帧数 ${platedFrames.length}, 车辆ID数 ${platedTrajMap.size}`);
+    if (platedFrames.length > 0) {
+        console.log('首帧时间:', new Date(platedFrames[0].time), '末帧时间:', new Date(platedFrames[platedFrames.length-1].time));
+    }
+}
+ function parsePlatedTimeStamp(timeStr) {
+            const parts = timeStr.split(' ');
+            const datePart = parts[0];
+            const timePart = parts[1];
+            const timeParts = timePart.split(':');
+            const ms = timeParts.length >= 4 ? parseInt(timeParts[3]) : 0;
+            const isoStr = `${datePart}T${timeParts[0]}:${timeParts[1]}:${timeParts[2]}.${ms.toString().padStart(3,'0')}+08:00`;
+            return Date.parse(isoStr);
+        }
+
+        document.getElementById('rasterFile').addEventListener('change', e => loadFile(e, 'raster'));
+        document.getElementById('gantryFile').addEventListener('change', e => loadFile(e, 'gantry'));
+        document.getElementById('trajFile').addEventListener('change', e => loadFile(e, 'traj'));
+        document.getElementById('platedFile').addEventListener('change', e => loadFile(e, 'plated'));
+
+
+
+        function loadFile(event, type) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const content = e.target.result;
+                if (type === 'raster') { parseRaster(content.split('\n'));
+                    rasterLoaded = true; }
+                if (type === 'gantry') { parseGantry(content.split('\n'));
+                    gantryLoaded = true; }
+                if (type === 'traj') { parseTraj(content.split('\n'));
+                    trajLoaded = true; }
+                if (type === 'plated') { parsePlated(content.split('\n'));
+                    platedLoaded = true; }
+                if (rasterLoaded && gantryLoaded && trajLoaded) checkReady();
+                if (platedLoaded) onPlatedReady();
+            };
+            reader.readAsText(file);
+        }
+
+        function parseRaster(lines) {
+            frames = [];
+            lines.forEach(line => {
+                if (!line.trim()) return;
+                try {
+                    const safeLine = line.replace(/"ID":(\d+)/g, '"ID":"$1"');
+                    const data = JSON.parse(safeLine);
+                    frames.push({ time: data.TIME, vehicles: data.TDATA });
+                } catch (err) {}
+            });
+            frames.sort((a, b) => a.time - b.time);
+        }
+// 确保 processPlatedItem 存在且健壮
+function processPlatedItem(data) {
+    let frameTime;
+    // 优先使用数字时间戳 time 字段
+    if (data.time && typeof data.time === 'number') {
+        frameTime = data.time;
+    } else if (data.timeStamp) {
+        frameTime = parsePlatedTimeStamp(data.timeStamp);
+    } else {
+        console.warn('忽略无时间戳的上牌条目', data);
+        return;
+    }
+    if (isNaN(frameTime)) {
+        console.warn('时间解析失败:', data.timeStamp);
+        return;
+    }
+
+    const vehicles = [];
+    if (data.pathList && Array.isArray(data.pathList)) {
+        data.pathList.forEach(v => {
+            const vData = {
+                id: v.id,
+                plateNo: v.plateNo || '',
+                plateColor: v.plateColor,
+                direction: v.direction,
+                laneNo: v.laneNo || 1,
+                mileage: v.mileage,
+                speed: v.speed,
+                timeStamp: v.timeStamp,
+                vehicleType: v.vehicleType,
+                carAngle: v.carAngle,
+                stakeId: v.stakeId,
+                originalType: v.originalType,
+                specialFlag: v.specialFlag || ''
+            };
+            vehicles.push(vData);
+            if (!platedTrajMap.has(String(v.id))) {
+                platedTrajMap.set(String(v.id), []);
+            }
+            platedTrajMap.get(String(v.id)).push({
+                time: frameTime,
+                timeStamp: v.timeStamp,
+                mileage: v.mileage,
+                laneNo: v.laneNo || 1,
+                speed: v.speed,
+                plateNo: v.plateNo || '',
+                direction: v.direction,
+                vehicleType: v.vehicleType,
+                stakeId: v.stakeId,
+                carAngle: v.carAngle
+            });
+        });
+    }
+    platedFrames.push({ time: frameTime, vehicles, timeStamp: data.timeStamp, pathNum: data.pathNum });
+}
+    document.getElementById('rasterFile').addEventListener('change', e => loadFile(e, 'raster'));
+    document.getElementById('gantryFile').addEventListener('change', e => loadFile(e, 'gantry'));
+    document.getElementById('trajFile').addEventListener('change', e => loadFile(e, 'traj'));
+    document.getElementById('platedFile').addEventListener('change', e => loadFile(e, 'plated'));
+
+    let rasterLoaded = false,
+        gantryLoaded = false,
+        trajLoaded = false,
+        platedLoaded = false;
+
+
+    function parseGantry(lines) {
+        gantries = [];
+        uniqueGantries.clear();
+        lines.forEach(line => {
+            if (!line.trim()) return;
+            try {
+                const data = JSON.parse(line);
+                const t = parseGantryTime(data.uploadTime);
+                gantries.push({ ...data, time: t, activeUntil: 0 });
+                const mileage = data.mileage;
+                const direction = data.direction;
+                const deviceId = data.deviceId;
+                if (mileage === undefined || direction === undefined) return;
+                const key = `${mileage}_${direction}`;
+                if (!uniqueGantries.has(key)) {
+                    uniqueGantries.set(key, { mileage: mileage, direction: direction,
+                        deviceIds: [deviceId] });
+                } else {
+                    let existing = uniqueGantries.get(key);
+                    if (!existing.deviceIds.includes(deviceId)) {
+                        existing.deviceIds.push(deviceId);
+                    }
+                }
+            } catch (err) {}
+        });
+        gantries.sort((a, b) => a.time - b.time);
+        console.log(`断面聚合完成: 原始设备记录数 ${gantries.length}, 聚合后断面数 ${uniqueGantries.size}`);
+    }
+
+    function parseTraj(lines) {
+        preprocessedTraj.clear();
+        lines.forEach(line => {
+            if (!line.trim()) return;
+            try {
+                let parts = line.split('|');
+                if (parts.length < 2) return;
+                let id = parts[0].split('_')[0];
+                let pointsRaw = parts[1].split(';');
+                let points = [];
+                for (let p of pointsRaw) {
+                    if (!p) continue;
+                    let inner = p.replace(/^\(|\)$/g, '');
+                    let attrs = inner.split(',');
+                    if (attrs.length >= 4) {
+                        let timeStr = attrs[3];
+                        points.push({
+                            mileage: parseFloat(attrs[0]),
+                            wayno: parseInt(attrs[1]),
+                            speed: parseFloat(attrs[2]),
+                            timeStr: timeStr,
+                            timeMs: parseGantryTime(timeStr)
+                        });
+                    }
+                }
+                points.sort((a, b) => a.timeMs - b.timeMs);
+                preprocessedTraj.set(id, points);
+            } catch (err) {}
+        });
+    }
+
+
+
+  function onPlatedReady() {
+    if (platedFrames.length === 0) {
+        document.getElementById('loadStatus').innerText = `基础文件加载完成，上牌轨迹为空！`;
+        return;
+    }
+    if (frames.length > 0) {
+        const pMin = platedFrames[0].time;
+        const pMax = platedFrames[platedFrames.length - 1].time;
+        if (rasterLoaded && gantryLoaded && trajLoaded) {
+            // 扩展时间范围
+            minTime = Math.min(minTime, pMin) - 1000;
+            maxTime = Math.max(maxTime, pMax) + 1000;
+            progressBar.max = maxTime - minTime;
+            if (currentTime < minTime) currentTime = minTime;
+
+            // 重新计算摄像机视野，确保上下两条路都能显示
+            let minM = Infinity, maxM = -Infinity;
+            frames.forEach(f => f.vehicles.forEach(v => {
+                if (v.tpointno < minM) minM = v.tpointno;
+                if (v.tpointno > maxM) maxM = v.tpointno;
+            }));
+            platedFrames.forEach(f => f.vehicles.forEach(v => {
+                if (v.mileage < minM) minM = v.mileage;
+                if (v.mileage > maxM) maxM = v.mileage;
+            }));
+            if (minM !== Infinity) {
+                const range = maxM - minM || 1000;
+                camera.scale = Math.min(0.6, canvas.width / (range * 1.2));
+                camera.x = canvas.width / 2 - ((minM + maxM) / 2) * camera.scale;
+                camera.y = canvas.height / 2; // 垂直居中，同时看到上下两条路
+            }
+        }
+    }
+    document.getElementById('loadStatus').innerText =
+        `全部加载完成！断面聚合数:${uniqueGantries.size} | 上牌轨迹帧数:${platedFrames.length} | 上牌车辆数:${platedTrajMap.size}`;
+    if (!isPlaying) draw(); // 强制重绘
+}
+function adjustCameraToData() {
+    let minM = Infinity, maxM = -Infinity;
+    frames.forEach(f => f.vehicles.forEach(v => {
+        if (v.tpointno < minM) minM = v.tpointno;
+        if (v.tpointno > maxM) maxM = v.tpointno;
+    }));
+    if (platedFrames.length > 0) {
+        platedFrames.forEach(f => f.vehicles.forEach(v => {
+            if (v.mileage < minM) minM = v.mileage;
+            if (v.mileage > maxM) maxM = v.mileage;
+        }));
+    }
+    if (minM !== Infinity) {
+        const range = maxM - minM || 1000;
+        camera.scale = Math.min(0.6, canvas.width / (range * 1.2));
+        camera.x = canvas.width / 2 - ((minM + maxM) / 2) * camera.scale;
+        camera.y = canvas.height / 2;
+    }
+}
+
+function checkReady() {
+    analyzeGhostIntervals();
+    document.getElementById('btnPlay').disabled = false;
+    document.getElementById('btnReset').disabled = false;
+    progressBar.disabled = false;
+
+    minTime = Math.min(frames[0].time, gantries[0]?.time || frames[0].time) - 1000;
+    maxTime = Math.max(frames[frames.length-1].time, gantries[gantries.length-1]?.time || frames[frames.length-1].time) + 1000;
+    if (platedFrames.length > 0) {
+        minTime = Math.min(minTime, platedFrames[0].time) - 1000;
+        maxTime = Math.max(maxTime, platedFrames[platedFrames.length-1].time) + 1000;
+    }
+    currentTime = minTime;
+    progressBar.max = maxTime - minTime;
+
+    adjustCameraToData(); // ⭐ 使用统一摄像机调整
+    canvas.width = canvas.parentElement.clientWidth - (detailPanel.style.display === 'block' ? 440 : 0) - 10;
+    draw();
+}
+    function analyzeGhostIntervals() {
+        ghostIntervals.clear();
+        let trackMap = new Map();
+        frames.forEach(frame => {
+            frame.vehicles.forEach(v => {
+                if (!trackMap.has(v.ID)) trackMap.set(v.ID, []);
+                trackMap.get(v.ID).push({ time: frame.time, mileage: v.tpointno, direct: v
+                        .direct });
+            });
+        });
+        trackMap.forEach((points, id) => {
+            let segments = [];
+            let currentSegment = [points[0]];
+            for (let i = 1; i < points.length; i++) {
+                if (points[i].time - points[i - 1].time > 5000) {
+                    segments.push(currentSegment);
+                    currentSegment = [points[i]];
+                } else {
+                    currentSegment.push(points[i]);
+                }
+            }
+            segments.push(currentSegment);
+            let intervals = [];
+            segments.forEach(seg => {
+                let firstPt = seg[0];
+                let matchedGantry = null;
+                uniqueGantries.forEach(g => {
+                    if (g.direction === firstPt.direct && Math.abs(firstPt.mileage - g
+                            .mileage) <= 100) {
+                        matchedGantry = g;
+                    }
+                });
+                if (matchedGantry) {
+                    let ghostStart = firstPt.time;
+                    let ghostEnd = seg[seg.length - 1].time;
+                    for (let i = 0; i < seg.length; i++) {
+                        let pt = seg[i];
+                        if (matchedGantry.direction === 1 && pt.mileage > matchedGantry.mileage) {
+                            ghostEnd = pt.time;
+                            break;
+                        } else if (matchedGantry.direction === 2 && pt.mileage < matchedGantry
+                            .mileage) {
+                            ghostEnd = pt.time;
+                            break;
+                        }
+                    }
+                    intervals.push({ start: ghostStart, end: ghostEnd });
+                }
+            });
+            if (intervals.length > 0) ghostIntervals.set(id, intervals);
+        });
+    }
+function shiftTimeBy(deltaMs) {
+    if (frames.length === 0 && gantries.length === 0 && platedFrames.length === 0) return;
+    let newTime = currentTime + deltaMs;
+    if (newTime > maxTime) newTime = maxTime;
+    if (newTime < minTime) newTime = minTime;
+    if (newTime === currentTime) return;
+    currentTime = newTime;
+    if (!isDraggingProgress) progressBar.value = currentTime - minTime;
+    draw();
+    // 如果详情面板打开且处于“截止当前时间”模式，刷新表格
+    if (detailPanel.style.display === 'block') {
+        if (currentDetailGantry) {
+            let mode = document.querySelector('input[name="gantryViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderGantryTable('upToNow');
+        } else if (currentDetailPlatedVehicle) {
+            let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderPlatedTable('upToNow');
+        }
+    }
+}
+    function isGhostCurrently(id, currTime) {
+        if (!ghostIntervals.has(id)) return false;
+        let intervals = ghostIntervals.get(id);
+        for (let i = 0; i < intervals.length; i++) {
+            if (currTime >= intervals[i].start && currTime <= intervals[i].end) return true;
+        }
+        return false;
+    }
+
+
+
+
+
+function draw() {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.translate(camera.x, camera.y);
+        ctx.scale(camera.scale, camera.scale);
+        const visibleMinX = -camera.x / camera.scale;
+        const visibleMaxX = (canvas.width - camera.x) / camera.scale;
+
+        // 上方道路
+        drawRoadLanes(visibleMinX, visibleMaxX, 0, false);
+        drawXAxis(visibleMinX, visibleMaxX, 0);
+        drawGantries();
+
+        // 下方道路
+        drawRoadLanes(visibleMinX, visibleMaxX, ROAD2_CENTER_Y, true);
+        drawXAxis(visibleMinX, visibleMaxX, ROAD2_CENTER_Y);
+        drawRoadSeparator(visibleMinX, visibleMaxX);
+drawGantriesLower();  // 新增：下方道路显示断面标记
+        // ==========================================
+        // ⭐ 修复核心：分别寻找两个方向的最新光栅帧并合并
+        // ==========================================
+        let latestDir1Frame = null;
+        let latestDir2Frame = null;
+
+        for (let i = frames.length - 1; i >= 0; i--) {
+            const frame = frames[i];
+            if (frame.time <= currentTime) {
+                if (frame.vehicles.length > 0) {
+                    const dir = frame.vehicles[0].direct;
+                    // 分别记录方向 1 和方向 2 的最新帧
+                    if (dir === 1 && !latestDir1Frame) latestDir1Frame = frame;
+                    else if (dir === 2 && !latestDir2Frame) latestDir2Frame = frame;
+                }
+
+                // 如果两个方向都找到了，或者往前找超过了 500ms（防止死循环/断流太久），就停止搜索
+                if ((latestDir1Frame && latestDir2Frame) || (currentTime - frame.time > 500)) {
+                    break;
+                }
+            }
+        }
+
+        // 将找到的两个方向的车辆合并为一个渲染帧
+        currentRenderedFrame = { time: currentTime, vehicles: [] };
+        if (latestDir1Frame) currentRenderedFrame.vehicles.push(...latestDir1Frame.vehicles);
+        if (latestDir2Frame) currentRenderedFrame.vehicles.push(...latestDir2Frame.vehicles);
+
+        // 渲染合并后的光栅车辆
+        if (currentRenderedFrame.vehicles.length > 0) {
+            drawVehicles(currentRenderedFrame.vehicles);
+        }
+
+        // ==========================================
+        // 融合数据因为是双向打包的，保留原逻辑即可
+        // ==========================================
+        currentRenderedPlatedFrame = null;
+        for (let i = platedFrames.length - 1; i >= 0; i--) {
+            if (platedFrames[i].time <= currentTime) {
+                currentRenderedPlatedFrame = platedFrames[i];
+                break;
+            }
+        }
+        if (currentRenderedPlatedFrame) {
+            drawPlatedVehicles(currentRenderedPlatedFrame.vehicles);
+        }
+
+        ctx.restore();
+        updateUI();
+    }
+    function drawGantriesLower() {
+    uniqueGantries.forEach(g => {
+        const x = g.mileage;
+        const yCenter = ROAD2_CENTER_Y;
+        ctx.strokeStyle = 'rgba(100, 180, 255, 0.6)';
+        ctx.lineWidth = 1.5 / camera.scale;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, yCenter - 120);
+        ctx.lineTo(x, yCenter + 120);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(100, 180, 255, 0.7)';
+        ctx.font = `${10/camera.scale}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`▾${g.mileage}m`, x, yCenter - 125);
+    });
+}
+    function drawRoadSeparator(minX, maxX) {
+        const sepY = ROAD2_CENTER_Y - 130;
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 2 / camera.scale;
+        ctx.setLineDash([30, 20]);
+        ctx.beginPath();
+        ctx.moveTo(minX, sepY);
+        ctx.lineTo(maxX, sepY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#777';
+        ctx.font = `${13/camera.scale}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.fillText('——— 上牌后轨迹道路 ———', (minX + maxX) / 2, sepY - 15 / camera.scale);
+    }
+
+    function drawRoadLanes(minX, maxX, centerY, isLower) {
+        const drawLine = (y, isDashed, color, weight) => {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = weight / camera.scale;
+            if (isDashed) ctx.setLineDash([15, 15]);
+            else ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(minX, y);
+            ctx.lineTo(maxX, y);
+            ctx.stroke();
+        };
+        const drawLabel = (text, y) => {
+            ctx.fillStyle = isLower ? '#b0b0b0' : '#666';
+            ctx.font = `${12/camera.scale}px Arial`;
+            ctx.fillText(text, minX + 20 / camera.scale, y);
+        };
+        drawLine(centerY, false, '#aaa', 3);
+        const prefix = isLower ? '下-' : '';
+        for (let i = 1; i <= 5; i++) {
+            drawLine(centerY - i * LANE_WIDTH, true, isLower ? '#666' : '#555', 1);
+            drawLabel(`${prefix}Dir1-车道${i}`, centerY - (i - 0.5) * LANE_WIDTH + 4 / camera.scale);
+            drawLine(centerY + i * LANE_WIDTH, true, isLower ? '#666' : '#555', 1);
+            drawLabel(`${prefix}Dir2-车道${i}`, centerY + (i - 0.5) * LANE_WIDTH + 4 / camera.scale);
+        }
+    }
+
+    function drawXAxis(minX, maxX, centerY) {
+        const yBase = centerY + 130;
+        ctx.strokeStyle = '#fff';
+        ctx.fillStyle = '#aaa';
+        ctx.font = `${12/camera.scale}px Arial`;
+        ctx.textAlign = 'center';
+        const step = 100;
+        const startX = Math.floor(minX / step) * step;
+        for (let x = startX; x <= maxX; x += step) {
+            ctx.beginPath();
+            ctx.moveTo(x, yBase);
+            ctx.lineTo(x, yBase + 10);
+            ctx.stroke();
+            ctx.fillText(x + ' m', x, yBase + 22);
+        }
+    }
+
+    function drawGantries() {
+        const flashDuration = 300;
+        uniqueGantries.forEach(g => {
+            const isDir1 = g.direction === 1;
+            const yOffset = isDir1 ? -100 : 0;
+            const yHeight = 100;
+            const isTracked = currentDetailGantry &&
+                currentDetailGantry.mileage === g.mileage &&
+                currentDetailGantry.direction === g.direction;
+            ctx.fillStyle = isTracked ? '#81d4fa' : '#4fc3f7';
+            ctx.fillRect(g.mileage, yOffset, (isTracked ? 4 : 2) / camera.scale, yHeight);
+            let deviceHint = g.deviceIds.length > 1 ? ` (${g.deviceIds.length}个设备)` : '';
+            ctx.fillStyle = isTracked ? '#fff' : '#ccc';
+            ctx.font = `${(isTracked ? 16 : 14)/camera.scale}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`断面${g.mileage}m${deviceHint}`, g.mileage - 10, isDir1 ? yOffset - 10 / camera.scale :
+                yOffset + yHeight + 20 / camera.scale);
+            let zoneStart = isDir1 ? g.mileage - 30 : g.mileage + 15;
+            let zoneWidth = 15;
+            const isFlashing = gantries.some(event =>
+                event.mileage === g.mileage &&
+                event.direction === g.direction &&
+                event.time <= currentTime &&
+                currentTime <= event.time + flashDuration
+            );
+            ctx.fillStyle = isFlashing ? 'rgba(244, 67, 54, 0.7)' : 'rgba(255, 213, 79, 0.3)';
+            ctx.fillRect(zoneStart, yOffset, zoneWidth, yHeight);
+            if (isFlashing) {
+                let activeEvent = gantries.find(event =>
+                    event.mileage === g.mileage &&
+                    event.direction === g.direction &&
+                    event.time <= currentTime &&
+                    currentTime <= event.time + flashDuration
+                );
+                if (activeEvent) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `bold ${16/camera.scale}px Arial`;
+                    ctx.fillText("📸 " + activeEvent.plateNumber, zoneStart, yOffset + yHeight / 2);
+                }
+            }
+        });
+    }
+
+    function drawVehicles(vehicles) {
+        vehicles.forEach(v => {
+            const isDir1 = v.direct === 1;
+            let safeWayno = (v.wayno === 9 || v.wayno > 5) ? 5 : (v.wayno || 1);
+            const y = isDir1 ? -(safeWayno - 0.5) * LANE_WIDTH : (safeWayno - 0.5) * LANE_WIDTH;
+            const x = v.tpointno;
+            const isGhost = isGhostCurrently(v.ID, currentTime);
+            ctx.beginPath();
+            ctx.arc(x, y, 6 / camera.scale, 0, Math.PI * 2);
+            const isTracked = currentDetailVehicle && currentDetailVehicle.ID === v.ID;
+            if (isGhost) {
+                ctx.shadowColor = '#e040fb';
+                ctx.shadowBlur = 20 / camera.scale;
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.lineWidth = isTracked ? 5 / camera.scale : 3 / camera.scale;
+                ctx.strokeStyle = isTracked ? '#fff' : '#e040fb';
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            } else {
+                ctx.fillStyle = isDir1 ? '#81c784' : '#e57373';
+                ctx.fill();
+                if (isTracked) { ctx.lineWidth = 3 / camera.scale;
+                    ctx.strokeStyle = '#fff';
+                    ctx.stroke(); }
+            }
+            const displayId = String(v.ID).slice(-6);
+            ctx.fillStyle = isGhost ? '#e040fb' : (isTracked ? '#4fc3f7' : '#fff');
+            ctx.font = `${isTracked ? 12 : 10}/camera.scale}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`ID:${displayId} (${Math.round(v.speed)})`, x + 10 / camera.scale, y + 4 / camera
+                .scale);
+        });
+    }
+
+    function drawPlatedVehicles(vehicles) {
+        vehicles.forEach(v => {
+            const isDir1 = v.direction === 1;
+            let safeWayno = (v.laneNo === 9 || v.laneNo > 5) ? 5 : (v.laneNo || 1);
+            const y = ROAD2_CENTER_Y + (isDir1 ? -(safeWayno - 0.5) * LANE_WIDTH : (safeWayno - 0.5) *
+                LANE_WIDTH);
+            const x = v.mileage;
+            const hasPlate = v.plateNo && v.plateNo.trim() !== '';
+            const isTracked = currentDetailPlatedVehicle && String(currentDetailPlatedVehicle.id) === String(v
+                .id);
+            ctx.beginPath();
+            ctx.arc(x, y, 6 / camera.scale, 0, Math.PI * 2);
+            if (hasPlate) {
+                ctx.fillStyle = isDir1 ? '#FFD54F' : '#FF8A65';
+            } else {
+                ctx.fillStyle = '#9E9E9E';
+            }
+            ctx.fill();
+            if (isTracked) {
+                ctx.lineWidth = 3 / camera.scale;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+            }
+            const displayLabel = hasPlate ? v.plateNo : '无车牌';
+            const displayId = String(v.id).slice(-6);
+            ctx.fillStyle = isTracked ? '#4fc3f7' : (hasPlate ? '#FFE082' : '#ccc');
+            ctx.font = `${isTracked ? 12 : 10}/camera.scale}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`${displayLabel} ID:${displayId} (${Math.round(v.speed)})`, x + 10 / camera.scale, y +
+                4 / camera.scale);
+        });
+    }
+
+    function closeDetailPanel() {
+        detailPanel.style.display = 'none';
+        currentDetailVehicle = null;
+        currentDetailGantry = null;
+        currentDetailPlatedVehicle = null;
+        canvas.width = canvas.parentElement.clientWidth - 10;
+        if (!isPlaying) draw();
+    }
+
+    function switchVehicleViewMode() {
+        let mode = document.querySelector('input[name="vehicleViewMode"]:checked').value;
+        renderVehicleTable(mode);
+    }
+
+    function showTrajectoryDetails(vehicle) {
+        isPlaying = false;
+        document.getElementById('btnPlay').innerText = '播放';
+        currentDetailVehicle = vehicle;
+        currentDetailGantry = null;
+        currentDetailPlatedVehicle = null;
+        detailPanel.style.display = 'block';
+        document.getElementById('vehicleToggleGroup').style.display = 'flex';
+        document.getElementById('gantryToggleGroup').style.display = 'none';
+        document.getElementById('platedToggleGroup').style.display = 'none';
+        canvas.width = canvas.parentElement.clientWidth - 440;
+        draw();
+        document.querySelector('input[name="vehicleViewMode"][value="near"]').checked = true;
+        renderVehicleTable('near');
+    }
+
+    function renderVehicleTable(mode) {
+        if (!currentDetailVehicle) return;
+        const vId = currentDetailVehicle.ID;
+        let points = preprocessedTraj.get(String(vId));
+        const descObj = document.getElementById('detailDesc');
+        document.getElementById('detailTitle').innerText = `车辆追踪 ID: ${vId}`;
+        let html =
+            `<thead><tr><th>时间</th><th>里程(m)</th><th>车道</th><th>速度</th></tr></thead><tbody>`;
+        if (!points) {
+            descObj.innerText = "未在预处理轨迹集中找到该车辆数据。";
+            html += `<tr><td colspan="4">无轨迹数据</td></tr></tbody>`;
+            document.getElementById('detailTable').innerHTML = html;
+            return;
+        }
+        let nearestGantry = null;
+        let minDiff = Infinity;
+        uniqueGantries.forEach(g => {
+            if (g.direction === currentDetailVehicle.direct) {
+                let diff = Math.abs(currentDetailVehicle.tpointno - g.mileage);
+                if (diff < minDiff) { minDiff = diff;
+                    nearestGantry = g; }
+            }
+        });
+        if (mode === 'near') {
+            descObj.innerText = nearestGantry ?
+                `捕捉坐标: ${currentDetailVehicle.tpointno}m，显示断面 ${nearestGantry.mileage} 前后200m范围:` :
+                `显示该车辆的所有轨迹点:`;
+            points.forEach(pt => {
+                let isNear = nearestGantry ? (Math.abs(pt.mileage - nearestGantry.mileage) <= 200) :
+                    true;
+                if (isNear) {
+                    let isCurrentPt = Math.abs(pt.timeMs - currentDetailVehicle.time) <= 100 || Math
+                        .abs(pt.mileage - currentDetailVehicle.tpointno) < 1;
+                    html +=
+                        `<tr style="${isCurrentPt ? 'background: #004d40; font-weight:bold;' : ''}">
+                    <td>${pt.timeStr.split(' ')[1]}</td><td>${pt.mileage}</td><td>${pt.wayno}</td><td>${pt.speed}</td>
+                </tr>`;
+                }
+            });
+        } else {
+            descObj.innerText = `全网轨迹追踪，时间差>5秒自动切分段落:`;
+            let segmentId = 1,
+                lastTime = 0;
+            points.forEach((pt, idx) => {
+                if (idx === 0) html +=
+                    `<tr class="seg-header"><td colspan="4">⚑ 轨迹段落 ${segmentId} 开始</td></tr>`;
+                else if (pt.timeMs - lastTime > 5000) {
+                    segmentId++;
+                    let gapSec = ((pt.timeMs - lastTime) / 1000).toFixed(1);
+                    html +=
+                        `<tr class="seg-header"><td colspan="4">⚑ 轨迹段落 ${segmentId} (中断 ${gapSec}秒)</td></tr>`;
+                }
+                lastTime = pt.timeMs;
+                let isCurrentPt = Math.abs(pt.mileage - currentDetailVehicle.tpointno) < 1;
+                html +=
+                    `<tr style="${isCurrentPt ? 'background: #004d40; font-weight:bold;' : ''}">
+                <td>${pt.timeStr.split(' ')[1]}</td><td>${pt.mileage}</td><td>${pt.wayno}</td><td>${pt.speed}</td>
+            </tr>`;
+            });
+        }
+        html += `</tbody>`;
+        document.getElementById('detailTable').innerHTML = html;
+    }
+
+    function switchGantryViewMode() {
+        let mode = document.querySelector('input[name="gantryViewMode"]:checked').value;
+        renderGantryTable(mode);
+    }
+
+    function showGantryDetails(gantrySection) {
+        isPlaying = false;
+        document.getElementById('btnPlay').innerText = '播放';
+        currentDetailGantry = gantrySection;
+        currentDetailVehicle = null;
+        currentDetailPlatedVehicle = null;
+        detailPanel.style.display = 'block';
+        document.getElementById('vehicleToggleGroup').style.display = 'none';
+        document.getElementById('gantryToggleGroup').style.display = 'flex';
+        document.getElementById('platedToggleGroup').style.display = 'none';
+        canvas.width = canvas.parentElement.clientWidth - 440;
+        draw();
+        document.querySelector('input[name="gantryViewMode"][value="upToNow"]').checked = true;
+        renderGantryTable('upToNow');
+    }
+
+    function renderGantryTable(mode) {
+        if (!currentDetailGantry) return;
+        const section = currentDetailGantry;
+        const targetMileage = section.mileage;
+        const targetDirection = section.direction;
+        const allDevicesStr = section.deviceIds.join(', ');
+        document.getElementById('detailTitle').innerHTML =
+            `📌 物理断面 ${targetMileage}m (方向${targetDirection})`;
+        let html =
+            `<thead><tr><th>时间</th><th>车牌</th><th>所属设备IP</th><th>操作</th></tr></thead><tbody>`;
+        let relatedEvents = gantries.filter(e => e.mileage === targetMileage && e.direction === targetDirection);
+        if (mode === 'upToNow') {
+    const seconds = parseInt(document.getElementById('gantrySeconds').value) || 5;
+    const fromTime = currentTime - seconds * 1000;
+    relatedEvents = relatedEvents.filter(e => e.time >= fromTime && e.time <= currentTime);
+    const d = new Date(currentTime);
+            const ms = d.getMilliseconds().toString().padStart(3, '0');
+            const s = d.getSeconds().toString().padStart(2, '0');
+            const m = d.getMinutes().toString().padStart(2, '0');
+            const h = d.getHours().toString().padStart(2, '0');
+            document.getElementById('detailDesc').innerHTML =
+                `断面包含设备: ${allDevicesStr} | 截止时间 ${h}:${m}:${s}.${ms} 上报事件：`;
+        } else {
+            document.getElementById('detailDesc').innerHTML =
+            `断面包含设备: ${allDevicesStr} | 全部历史上报记录：`;
+        }
+        relatedEvents.forEach((ev, idx) => {
+            let timeStr = ev.uploadTime.split(' ')[1];
+            html += `<tr>
+            <td>${timeStr}</td>
+            <td>${ev.plateNumber}</td>
+            <td>${ev.deviceId}</td>
+            <td><button class="detail-btn" onclick="toggleGantryEvent(${idx})">详情</button></td>
+        </tr>
+        <tr id="gantry-ev-${idx}" style="display:none;">
+            <td colspan="4"><pre class="json-viewer">${JSON.stringify(ev, null, 2)}</pre></td>
+        </tr>`;
+        });
+        if (relatedEvents.length === 0) html += `<tr><td colspan="4">当前时间范围内无上报数据</td></tr>`;
+        html += `</tbody>`;
+        document.getElementById('detailTable').innerHTML = html;
+        if (mode === 'upToNow') {
+            setTimeout(() => {
+                const panel = document.getElementById('detailPanel');
+                if (panel) { panel.scrollTop = panel.scrollHeight; }
+            }, 0);
+        }
+    }
+
+    window.toggleGantryEvent = function(idx) {
+        let row = document.getElementById(`gantry-ev-${idx}`);
+        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+    };
+
+    // 上牌后车辆详情
+    function switchPlatedViewMode() {
+        let mode = document.querySelector('input[name="platedViewMode"]:checked').value;
+        renderPlatedTable(mode);
+    }
+
+    function showPlatedVehicleDetails(vehicle) {
+        isPlaying = false;
+        document.getElementById('btnPlay').innerText = '播放';
+        currentDetailPlatedVehicle = vehicle;
+        currentDetailVehicle = null;
+        currentDetailGantry = null;
+        detailPanel.style.display = 'block';
+        document.getElementById('vehicleToggleGroup').style.display = 'none';
+        document.getElementById('gantryToggleGroup').style.display = 'none';
+        document.getElementById('platedToggleGroup').style.display = 'flex';
+        canvas.width = canvas.parentElement.clientWidth - 440;
+        draw();
+        document.querySelector('input[name="platedViewMode"][value="upToNow"]').checked = true;
+        renderPlatedTable('upToNow');
+    }
+
+    function renderPlatedTable(mode) {
+        if (!currentDetailPlatedVehicle) return;
+        const vId = String(currentDetailPlatedVehicle.id);
+        const plateLabel = (currentDetailPlatedVehicle.plateNo && currentDetailPlatedVehicle.plateNo.trim() !== '') ?
+            currentDetailPlatedVehicle.plateNo : '无车牌';
+        document.getElementById('detailTitle').innerHTML =
+            `🚗 上牌后车辆 ID: ${vId} | 车牌: ${plateLabel}`;
+        let html =
+            `<thead><tr><th>时间</th><th>里程(m)</th><th>车道</th><th>速度</th><th>车牌</th><th>方向</th></tr></thead><tbody>`;
+        let allPts = platedTrajMap.get(vId) || [];
+        let displayPts = mode === 'upToNow' ? allPts.filter(p => p.time <= currentTime) : allPts;
+        if (mode === 'upToNow') {
+            const d = new Date(currentTime);
+            const ms = d.getMilliseconds().toString().padStart(3, '0');
+            const s = d.getSeconds().toString().padStart(2, '0');
+            const m = d.getMinutes().toString().padStart(2, '0');
+            const h = d.getHours().toString().padStart(2, '0');
+            document.getElementById('detailDesc').innerHTML =
+                `截止时间 ${h}:${m}:${s}.${ms}，共 ${displayPts.length} 条记录`;
+        } else {
+            document.getElementById('detailDesc').innerHTML = `全部记录，共 ${displayPts.length} 条`;
+        }
+        displayPts.forEach(pt => {
+            let timeStr = pt.timeStamp ? pt.timeStamp.split(' ')[1] : new Date(pt.time)
+                .toISOString().split('T')[1].slice(0, 12);
+            let pn = pt.plateNo && pt.plateNo.trim() !== '' ? pt.plateNo : '无车牌';
+            let isCurrentPt = currentDetailPlatedVehicle.mileage !== undefined && Math.abs(pt.mileage -
+                currentDetailPlatedVehicle.mileage) < 1;
+            html +=
+                `<tr style="${isCurrentPt ? 'background: #004d40; font-weight:bold;' : ''}">
+                <td>${timeStr}</td><td>${pt.mileage}</td><td>${pt.laneNo}</td><td>${pt.speed}</td><td>${pn}</td><td>${pt.direction}</td>
+            </tr>`;
+        });
+        if (displayPts.length === 0) html += `<tr><td colspan="6">当前时间范围内无记录</td></tr>`;
+        html += `</tbody>`;
+        document.getElementById('detailTable').innerHTML = html;
+        if (mode === 'upToNow') {
+            setTimeout(() => {
+                const panel = document.getElementById('detailPanel');
+                if (panel) { panel.scrollTop = panel.scrollHeight; }
+            }, 0);
+        }
+    }
+
+    function getHitVehicle(logicX, logicY) {
+        if (!currentRenderedFrame) return null;
+        for (let i = currentRenderedFrame.vehicles.length - 1; i >= 0; i--) {
+            let v = currentRenderedFrame.vehicles[i];
+            let safeWayno = (v.wayno === 9 || v.wayno > 5) ? 5 : (v.wayno || 1);
+            let vY = v.direct === 1 ? -(safeWayno - 0.5) * LANE_WIDTH : (safeWayno - 0.5) * LANE_WIDTH;
+            let circleHit = Math.sqrt(Math.pow(logicX - v.tpointno, 2) + Math.pow(logicY - vY, 2)) <= 15 / camera
+                .scale;
+            let textHit = logicX >= v.tpointno && logicX <= v.tpointno + 100 / camera.scale &&
+                logicY >= vY - 10 / camera.scale && logicY <= vY + 10 / camera.scale;
+            if (circleHit || textHit) return v;
+        }
+        return null;
+    }
+
+    function getHitGantry(logicX, logicY) {
+        let hit = null;
+        uniqueGantries.forEach(g => {
+            let isDir1 = g.direction === 1;
+            let yOffset = isDir1 ? -100 : 0;
+            let yHeight = 100;
+            if (logicX >= g.mileage - 40 && logicX <= g.mileage + 40 &&
+                logicY >= yOffset - 20 / camera.scale && logicY <= yOffset + yHeight + 20 / camera.scale) {
+                hit = g;
+            }
+        });
+        return hit;
+    }
+
+    function getHitPlatedVehicle(logicX, logicY) {
+        if (!currentRenderedPlatedFrame) return null;
+        for (let i = currentRenderedPlatedFrame.vehicles.length - 1; i >= 0; i--) {
+            let v = currentRenderedPlatedFrame.vehicles[i];
+            let safeWayno = (v.laneNo === 9 || v.laneNo > 5) ? 5 : (v.laneNo || 1);
+            let vY = ROAD2_CENTER_Y + (v.direction === 1 ? -(safeWayno - 0.5) * LANE_WIDTH : (safeWayno - 0.5) *
+                LANE_WIDTH);
+            let circleHit = Math.sqrt(Math.pow(logicX - v.mileage, 2) + Math.pow(logicY - vY, 2)) <= 15 / camera
+            .scale;
+            let textHit = logicX >= v.mileage && logicX <= v.mileage + 140 / camera.scale &&
+                logicY >= vY - 10 / camera.scale && logicY <= vY + 10 / camera.scale;
+            if (circleHit || textHit) return v;
+        }
+        return null;
+    }
+
+    canvas.addEventListener('mousedown', e => {
+        isDragging = true;
+        dragStart.x = e.offsetX - camera.x;
+        dragStart.y = e.offsetY - camera.y;
+        clickStart.x = e.offsetX;
+        clickStart.y = e.offsetY;
+        canvas.style.cursor = 'grabbing';
+    });
+
+    canvas.addEventListener('mousemove', e => {
+        if (isDragging) {
+            camera.x = e.offsetX - dragStart.x;
+            camera.y = e.offsetY - dragStart.y;
+            if (!isPlaying) draw();
+            tooltip.style.display = 'none';
+        } else {
+            const logicX = (e.offsetX - camera.x) / camera.scale;
+            const logicY = (e.offsetY - camera.y) / camera.scale;
+            let hoveredV = getHitVehicle(logicX, logicY);
+            let hoveredG = getHitGantry(logicX, logicY);
+            let hoveredPV = getHitPlatedVehicle(logicX, logicY);
+            if (hoveredPV) {
+                canvas.style.cursor = 'pointer';
+                tooltip.style.display = 'none';
+            } else if (hoveredV) {
+                canvas.style.cursor = 'pointer';
+                tooltip.style.display = 'none';
+            } else if (hoveredG) {
+                canvas.style.cursor = 'pointer';
+                tooltip.style.left = (e.clientX + 15) + 'px';
+                tooltip.style.top = (e.clientY + 15) + 'px';
+                const deviceCnt = hoveredG.deviceIds.length;
+                tooltip.innerText =
+                    `📡 物理断面 ${hoveredG.mileage}m (方向${hoveredG.direction})\n聚合设备数: ${deviceCnt}\n点击查看该断面全部上报记录`;
+                tooltip.style.display = 'block';
+            } else {
+                canvas.style.cursor = 'grab';
+                tooltip.style.display = 'none';
+            }
+        }
+    });
+
+    canvas.addEventListener('mouseup', e => {
+        isDragging = false;
+        const logicX = (e.offsetX - camera.x) / camera.scale;
+        const logicY = (e.offsetY - camera.y) / camera.scale;
+        let hoveredPV = getHitPlatedVehicle(logicX, logicY);
+        let hoveredV = getHitVehicle(logicX, logicY);
+        let hoveredG = getHitGantry(logicX, logicY);
+        canvas.style.cursor = (hoveredV || hoveredG || hoveredPV) ? 'pointer' : 'grab';
+        if (Math.abs(e.offsetX - clickStart.x) < 5 && Math.abs(e.offsetY - clickStart.y) < 5) {
+            if (hoveredPV) {
+                showPlatedVehicleDetails(hoveredPV);
+            } else if (hoveredV) {
+                hoveredV.time = currentRenderedFrame ? currentRenderedFrame.time : currentTime;
+                showTrajectoryDetails(hoveredV);
+            } else if (hoveredG) {
+                showGantryDetails(hoveredG);
+            }
+        }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        isDragging = false;
+        canvas.style.cursor = 'grab';
+        tooltip.style.display = 'none';
+    });
+
+    function updateUI() {
+        const d = new Date(currentTime);
+        const ms = d.getMilliseconds().toString().padStart(3, '0');
+        const s = d.getSeconds().toString().padStart(2, '0');
+        const m = d.getMinutes().toString().padStart(2, '0');
+        const h = d.getHours().toString().padStart(2, '0');
+        timeDisplay.innerText = `${h}:${m}:${s}.${ms}`;
+        if (!isDraggingProgress) progressBar.value = currentTime - minTime;
+        if (isPlaying && detailPanel.style.display === 'block') {
+            if (currentDetailGantry) {
+                let mode = document.querySelector('input[name="gantryViewMode"]:checked')?.value;
+                if (mode === 'upToNow') renderGantryTable('upToNow');
+            }
+            if (currentDetailPlatedVehicle) {
+                let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
+                if (mode === 'upToNow') renderPlatedTable('upToNow');
+            }
+        }
+        if (currentTime >= maxTime && isPlaying) {
+            isPlaying = false;
+            document.getElementById('btnPlay').innerText = '播放';
+        }
+    }
+
+    function loop(now) {
+        if (isPlaying) { currentTime += (now - lastRenderTime) * playSpeed;
+            draw(); }
+        lastRenderTime = now;
+        animationId = requestAnimationFrame(loop);
+    }
+
+    document.getElementById('btnPlay').onclick = (e) => {
+        isPlaying = !isPlaying;
+        e.target.innerText = isPlaying ? '暂停' : '播放';
+        if (isPlaying && currentTime >= maxTime) currentTime = minTime;
+        if (!animationId) requestAnimationFrame(loop);
+    };
+    document.getElementById('btnReset').onclick = () => {
+        currentTime = minTime;
+        isPlaying = false;
+        document.getElementById('btnPlay').innerText = '播放';
+        draw();
+    };
+    document.getElementById('speedRange').oninput = (e) => playSpeed = parseFloat(e.target.value);
+    let isDraggingProgress = false;
+    progressBar.addEventListener('mousedown', () => isDraggingProgress = true);
+    progressBar.addEventListener('mouseup', () => isDraggingProgress = false);
+    progressBar.addEventListener('input', (e) => {
+        currentTime = minTime + parseFloat(e.target.value);
+        if (!isPlaying) draw();
+        if (currentDetailGantry) {
+            let mode = document.querySelector('input[name="gantryViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderGantryTable('upToNow');
+        } else if (currentDetailVehicle) {
+            renderVehicleTable(document.querySelector('input[name="vehicleViewMode"]:checked').value);
+        } else if (currentDetailPlatedVehicle) {
+            let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderPlatedTable('upToNow');
+        }
+    });
+
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const zoomIntensity = 0.1;
+        const wheel = e.deltaY < 0 ? 1 : -1;
+        let zoom = Math.exp(wheel * zoomIntensity);
+        camera.x = e.offsetX - (e.offsetX - camera.x) * zoom;
+        camera.y = e.offsetY - (e.offsetY - camera.y) * zoom;
+        camera.scale *= zoom;
+        const logicX = (e.offsetX - camera.x) / camera.scale;
+        const logicY = (e.offsetY - camera.y) / camera.scale;
+        canvas.style.cursor = (getHitVehicle(logicX, logicY) || getHitGantry(logicX, logicY) || getHitPlatedVehicle(
+            logicX, logicY)) ? 'pointer' : (isDragging ? 'grabbing' : 'grab');
+        if (!isPlaying) draw();
+    });
+</script>
+</body>
+</html>
