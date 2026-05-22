@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <title>光栅与卡口高级分析 | 双道路版 + 上牌后轨迹</title>
     <style>
+        #rulerCanvas {
+    width: 100%;
+    height: 50px;
+    display: block;
+    margin-top: 8px;
+}
         body {
             background-color: #1a1a1a;
             color: #e0e0e0;
@@ -212,10 +218,25 @@
             text-align: center;
             letter-spacing: 2px;
         }
-/* 在 <style> 中添加 */
-.controls label:has(input[type="file"]) {
-    display: none;
+        .main-container {
+    display: flex;
+    gap: 10px;
+    position: relative;
 }
+#leftDetailPanel, #detailPanel {
+    flex-shrink: 0;
+}
+canvas {
+    flex-grow: 1;
+    height: 880px;
+    cursor: grab;
+}
+#rulerCanvas {
+    cursor: crosshair; /* 默认显示十字，表示可框选 */
+}
+.controls label:has(input[type="file"]) {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -229,6 +250,7 @@
         <label>3. 轨迹集(txt): <input type="file" id="trajFile" accept=".txt"></label>
         <label>4. 上牌轨迹(jsonl): <input type="file" id="platedFile" accept=".jsonl"></label>
         <span id="loadStatus" class="status">请依次加载文件(1-3必填,4选填)...</span>
+        <button id="btnFocusRange" style="background:#e67e22;">🎯 聚焦高亮区间</button>
     </div>
 
     <div class="controls">
@@ -254,8 +276,23 @@
     </div>
 </div>
 
-<div class="main-container">
+<div class="main-container" style="display: flex; flex-direction: column; gap: 10px;">
+    <div id="rulerContainer" style="margin-bottom: 8px;">
+    <canvas id="rulerCanvas" width="1200" height="50" style="background: #2a2a2a; border-radius: 4px; border: 1px solid #444; cursor: pointer; width: 100%;"></canvas>
+</div>
+      <div style="display: flex; gap: 10px;">
+    <div id="leftDetailPanel" style="display: none; width: 420px; background: #222; border: 1px solid #444; border-radius: 4px; padding: 10px; height: 858px; overflow-y: auto; box-shadow: 4px 0 10px rgba(0,0,0,0.5);">
+    <button class="close-btn" onclick="closeLeftDetailPanel()">×</button>
+    <h3 id="leftDetailTitle">车辆轨迹明细</h3>
+    <div class="toggle-group" id="leftVehicleToggleGroup">
+        <label><input type="radio" name="leftVehicleViewMode" value="near" checked onchange="switchLeftVehicleViewMode()"> 仅看卡口附近</label>
+        <label><input type="radio" name="leftVehicleViewMode" value="all" onchange="switchLeftVehicleViewMode()"> 全网分段轨迹</label>
+    </div>
+    <p id="leftDetailDesc" style="font-size: 0.85em; color: #aaa; margin-top: 0px; margin-bottom: 8px;"></p>
+    <table class="traj-table" id="leftDetailTable"></table>
+</div>
     <canvas id="roadCanvas" width="1200" height="880"></canvas>
+
     <div id="detailPanel">
         <button class="close-btn" onclick="closeDetailPanel()">×</button>
         <h3 id="detailTitle">明细信息</h3>
@@ -275,38 +312,105 @@
         <p id="detailDesc" style="font-size: 0.85em; color: #aaa; margin-top: 0px; margin-bottom: 8px;"></p>
         <table class="traj-table" id="detailTable"></table>
     </div>
+    </div>
+
 </div>
 
+
 <script>
+    const VEHICLE_RADIUS = 9;
+    const leftDetailPanel = document.getElementById('leftDetailPanel');
+let currentLeftDetailVehicle = null;      // 左侧当前显示的车辆
+let isLeftDetailOpen = false;
+function closeLeftDetailPanel() {
+    leftDetailPanel.style.display = 'none';
+    currentLeftDetailVehicle = null;
+    isLeftDetailOpen = false;
+    adjustCanvasWidth();            // 调整画布宽度
+    if (!isPlaying) draw();
+}
+function adjustCanvasWidth() {
+    let leftW = leftDetailPanel.style.display === 'block' ? 440 : 0;
+    let rightW = detailPanel.style.display === 'block' ? 440 : 0;
+    canvas.width = canvas.parentElement.clientWidth - leftW - rightW - 10;
+}
+window.addEventListener('resize', () => {
+    adjustCanvasWidth();
+    if (!isPlaying) draw();
+});
 document.addEventListener('keydown', (e) => {
+    // 若焦点在输入框、文本域或下拉选择框内，不触发，避免干扰正常输入
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
     if (e.code === 'Space') {
-        e.preventDefault();
+        e.preventDefault(); // 阻止按下空格键时页面滚动
         document.getElementById('btnPlay').click();
-    } else if (e.code === 'ArrowLeft') {
+    }
+    // ➡️ 1. 方向键快捷键 (左右方向键)
+    else if (e.code === 'ArrowLeft') {
         e.preventDefault();
         shiftTimeBy(-3000);   // 后退3秒
     } else if (e.code === 'ArrowRight') {
         e.preventDefault();
         shiftTimeBy(3000);    // 前进3秒
-    }else if (e.code === 'KeyA') {
-    e.preventDefault();
-    currentTime = Math.max(minTime, currentTime - 6000);
-    draw();
-} else if (e.code === 'KeyD') {
-    e.preventDefault();
-    currentTime = Math.min(maxTime, currentTime + 6000);
-    draw();
-} else if (e.code === 'KeyQ') {
-    e.preventDefault();
-    currentTime = Math.max(minTime, currentTime - 1000);
-    draw();
-} else if (e.code === 'KeyE') {
-    e.preventDefault();
-    currentTime = Math.min(maxTime, currentTime + 1000);
-    draw();
-}
+    }
+    // ➡️ 2. 大步长微调 (A / D 键)
+    else if (e.code === 'KeyA') {
+        e.preventDefault();
+        shiftTimeBy(-6000);   // 后退6秒
+    } else if (e.code === 'KeyD') {
+        e.preventDefault();
+        shiftTimeBy(6000);    // 前进6秒
+    }
+    // ➡️ 3. 极精准微调 (Q / E 键)
+    else if (e.code === 'KeyQ') {
+        e.preventDefault();
+        shiftTimeBy(-300);   // 后退1秒
+    } else if (e.code === 'KeyE') {
+        e.preventDefault();
+        shiftTimeBy(300);    // 前进1秒
+    }
+    // ➡️ 3. 极精准微调 (Q / E 键)
+    else if (e.code === 'KeyJ') {
+        e.preventDefault();
+        shiftTimeBy(-100);   // 后退1秒
+    } else if (e.code === 'KeyL') {
+        e.preventDefault();
+        shiftTimeBy(100);    // 前进1秒
+    }
 });
+function shiftTimeBy(deltaMs) {
+    if (frames.length === 0 && gantries.length === 0 && platedFrames.length === 0) return;
+
+    // 1. 计算新时间，并加上最大最小值的越界保护
+    let newTime = currentTime + deltaMs;
+    if (newTime > maxTime) newTime = maxTime;
+    if (newTime < minTime) newTime = minTime;
+    if (newTime === currentTime) return;
+
+    // 2. 更新全局时间
+    currentTime = newTime;
+
+    // 3. 同步更新进度条
+    if (progressBar) progressBar.value = currentTime - minTime;
+
+    // 4. 强制重新绘制地图上的所有车辆
+    draw();
+
+    // 5. 如果右侧明细面板是打开的，顺便连带刷新表格数据
+    if (detailPanel && detailPanel.style.display === 'block') {
+        if (currentDetailGantry) {
+            let mode = document.querySelector('input[name="gantryViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderGantryTable('upToNow');
+        } else if (currentDetailPlatedVehicle) {
+            let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
+            if (mode === 'upToNow') renderPlatedTable('upToNow');
+        } else if (currentDetailVehicle) {
+            let mode = document.querySelector('input[name="vehicleViewMode"]:checked')?.value;
+            renderVehicleTable(mode || 'near');
+        }
+    }
+}
     const canvas = document.getElementById('roadCanvas');
     const ctx = canvas.getContext('2d');
     const tooltip = document.getElementById('tooltip');
@@ -336,6 +440,169 @@ document.addEventListener('keydown', (e) => {
     let currentDetailPlatedVehicle = null;
 
     let camera = { x: 0, y: canvas.height / 2 - 60, scale: 0.55 };
+    const rulerCanvas = document.getElementById('rulerCanvas');
+const rulerCtx = rulerCanvas.getContext('2d');
+// 拖拽框选相关变量
+let isSelecting = false;
+let selectionStartX = 0, selectionEndX = 0;
+let selectRect = null; // 存储 { start, end }
+let rulerWidth = 0;
+let rulerMinM = 0, rulerMaxM = 0;
+
+function updateRuler() {
+    if (!rulerCanvas) return;
+    rulerWidth = rulerCanvas.clientWidth;
+    rulerCanvas.width = rulerWidth;
+    rulerCanvas.height = 50;
+
+    // 获取当前可视区域的里程范围（逻辑坐标）
+    const visibleMinX = -camera.x / camera.scale;
+    const visibleMaxX = (canvas.width - camera.x) / camera.scale;
+    rulerMinM = visibleMinX;
+    rulerMaxM = visibleMaxX;
+
+    rulerCtx.clearRect(0, 0, rulerWidth, 50);
+    rulerCtx.fillStyle = '#2a2a2a';
+    rulerCtx.fillRect(0, 0, rulerWidth, 50);
+
+    // 绘制刻度线和大刻度标签
+    const step = getOptimalStepForRuler(); // 独立步长函数（稍后定义）
+    const startM = Math.floor(rulerMinM / step) * step;
+    for (let m = startM; m <= rulerMaxM; m += step) {
+        const x = (m - rulerMinM) / (rulerMaxM - rulerMinM) * rulerWidth;
+        if (x < 0 || x > rulerWidth) continue;
+        rulerCtx.beginPath();
+        rulerCtx.moveTo(x, 30);
+        rulerCtx.lineTo(x, 45);
+        rulerCtx.strokeStyle = '#aaa';
+        rulerCtx.lineWidth = 1;
+        rulerCtx.stroke();
+
+        // 每隔一个步长显示文字（避免重叠）
+        if (step >= 100 || (step >= 50 && Math.floor(m / step) % 2 === 0)) {
+            rulerCtx.fillStyle = '#ddd';
+            rulerCtx.font = '12px Arial';
+            rulerCtx.textAlign = 'center';
+            rulerCtx.fillText((m / 1000).toFixed(1) + 'km', x, 20);
+        }
+    }
+
+    // 高亮 1110000~1130000 区域
+    const hlStart = 1110000, hlEnd = 1130000;
+    if (rulerMaxM > hlStart && rulerMinM < hlEnd) {
+        const left = Math.max(0, (hlStart - rulerMinM) / (rulerMaxM - rulerMinM) * rulerWidth);
+        const right = Math.min(rulerWidth, (hlEnd - rulerMinM) / (rulerMaxM - rulerMinM) * rulerWidth);
+        rulerCtx.fillStyle = 'rgba(255, 100, 100, 0.4)';
+        rulerCtx.fillRect(left, 0, right - left, 50);
+        rulerCtx.strokeStyle = '#ff6666';
+        rulerCtx.lineWidth = 1;
+        rulerCtx.strokeRect(left, 0, right - left, 50);
+    }
+        // 绘制选择框（拖拽时）
+    if (selectRect && isSelecting) {
+        const left = (selectRect.start - rulerMinM) / (rulerMaxM - rulerMinM) * rulerWidth;
+        const right = (selectRect.end - rulerMinM) / (rulerMaxM - rulerMinM) * rulerWidth;
+        rulerCtx.fillStyle = 'rgba(100, 200, 255, 0.3)';
+        rulerCtx.fillRect(left, 0, right - left, 50);
+        rulerCtx.strokeStyle = '#66ccff';
+        rulerCtx.lineWidth = 1.5;
+        rulerCtx.strokeRect(left, 0, right - left, 50);
+    }
+}
+function getOptimalStepForRuler() {
+    const visibleRange = rulerMaxM - rulerMinM;
+    if (visibleRange < 500) return 100;
+    if (visibleRange < 1500) return 200;
+    if (visibleRange < 4000) return 500;
+    return 1000;
+}
+// 拖拽框选及点击跳转
+rulerCanvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    isSelecting = true;
+    const rect = rulerCanvas.getBoundingClientRect();
+    const scaleX = rulerWidth / (rulerMaxM - rulerMinM);
+    selectionStartX = rulerMinM + ((e.clientX - rect.left) / scaleX);
+    selectionEndX = selectionStartX;
+    selectRect = { start: selectionStartX, end: selectionStartX };
+    rulerCanvas.style.cursor = 'crosshair';
+    e.preventDefault();
+});
+
+// 修改原有的 mousemove 提示
+rulerCanvas.addEventListener('mousemove', (e) => {
+    if (isSelecting) return; // 拖拽时不显示悬浮提示
+    const scaleX = rulerWidth / (rulerMaxM - rulerMinM);
+    const mouseM = rulerMinM + (e.offsetX / scaleX);
+    if (isNaN(mouseM)) return;
+    let displayValue = mouseM >= 1000 ? (mouseM/1000).toFixed(2) + ' km' : Math.round(mouseM) + ' m';
+    tooltip.innerText = `里程: ${displayValue}`;
+    tooltip.style.left = (e.clientX + 15) + 'px';
+    tooltip.style.top = (e.clientY + 15) + 'px';
+    tooltip.style.display = 'block';
+});
+document.getElementById('btnFocusRange').addEventListener('click', () => {
+    const start = 1110000;
+    const end = 1130000;
+    const width = end - start;
+    camera.scale = canvas.width / width * 0.95;
+    const center = (start + end) / 2;
+    camera.x = canvas.width / 2 - center * camera.scale;
+    if (!isPlaying) draw();
+    updateRuler();
+});
+rulerCanvas.addEventListener('mouseup', (e) => {
+    if (!isSelecting) return;
+    isSelecting = false;
+    rulerCanvas.style.cursor = 'pointer';
+
+    const moved = Math.abs(selectionEndX - selectionStartX);
+    if (moved < 5) {
+        // 视为点击跳转
+        const clickM = selectionStartX;
+        if (!isNaN(clickM)) {
+            camera.x = canvas.width / 2 - clickM * camera.scale;
+            if (!isPlaying) draw();
+            updateRuler();
+        }
+    } else {
+        // 拖拽选择范围，放大到该范围
+        const rangeStart = selectRect.start;
+        const rangeEnd = selectRect.end;
+        const rangeWidth = rangeEnd - rangeStart;
+        if (rangeWidth > 0) {
+            const targetScale = canvas.width / rangeWidth * 0.95;
+            camera.scale = Math.min(8, Math.max(0.05, targetScale));
+            const centerM = (rangeStart + rangeEnd) / 2;
+            camera.x = canvas.width / 2 - centerM * camera.scale;
+            if (!isPlaying) draw();
+            updateRuler();
+        }
+    }
+    selectRect = null;
+    updateRuler(); // 清除选择框
+});
+    // 滚轮缩放横轴
+rulerCanvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = rulerCanvas.getBoundingClientRect();
+    const scaleX = rulerWidth / (rulerMaxM - rulerMinM);
+    const mouseX = e.clientX - rect.left;
+    const mouseM = rulerMinM + (mouseX / scaleX);
+    if (isNaN(mouseM)) return;
+
+    const delta = e.deltaY > 0 ? 1.1 : 0.9; // 缩放因子
+    let newScale = camera.scale * delta;
+    if (newScale < 0.05) newScale = 0.05;
+    if (newScale > 8) newScale = 8;
+
+    // 以鼠标位置对应的里程为中心缩放
+    camera.scale = newScale;
+    camera.x = canvas.width / 2 - mouseM * camera.scale;
+
+    if (!isPlaying) draw();
+    updateRuler();
+});
     let isDragging = false;
     let dragStart = { x: 0, y: 0 };
     let clickStart = { x: 0, y: 0 };
@@ -344,7 +611,7 @@ document.addEventListener('keydown', (e) => {
     const timeDisplay = document.getElementById('timeDisplay');
     const detailPanel = document.getElementById('detailPanel');
     const LANE_WIDTH = 20;
-    const ROAD2_CENTER_Y = 480;
+    const ROAD2_CENTER_Y = 360;
 
     function parseGantryTime(timeStr) {
         const isoStr = timeStr.replace(' ', 'T').replace(/:(\d{3})$/, '.$1') + '+08:00';
@@ -353,99 +620,71 @@ document.addEventListener('keydown', (e) => {
 
 
 function parsePlated(lines) {
-    let errorCount = 0;
+    platedFrames = [];
+    platedTrajMap.clear();
     console.log('开始解析上牌数据，行数:', lines.length);
 
     lines.forEach((line, idx) => {
-        let trimmed = line.trim();
+        const trimmed = line.trim();
         if (!trimmed) return;
-
-        // 🛠️ 核心修复逻辑：动态检测并自动修复被截断的长 JSON 行
-        if (trimmed.startsWith('{') && !trimmed.endsWith('}')) {
-            console.warn(`检测到第 ${idx + 1} 行不完整，正在尝试自动修复闭合结构...`);
-            
-            // 补齐未闭合的数组和对象结构
-            if (trimmed.includes('"pathList": [') && !trimmed.endsWith(']}')) {
-                // 如果截断处正好在某个车辆对象的属性中间，先干掉最后那个不完整的对象
-                let lastObjStart = trimmed.lastIndexOf('{');
-                let lastListStart = trimmed.lastIndexOf('"pathList": [');
-                if (lastObjStart > lastListStart) {
-                    trimmed = trimmed.substring(0, lastObjStart);
-                    // 移除末尾多余的逗号
-                    trimmed = trimmed.replace(/,\s*$/, '');
-                }
-                trimmed += ']}'; // 强行闭合
-            } else {
-                trimmed += '}';
-            }
-        }
-
         try {
             const data = JSON.parse(trimmed);
+            // 兼容数组格式
             if (Array.isArray(data)) {
+                console.warn('检测到数组格式，自动展开为多帧');
                 data.forEach(item => processPlatedItem(item));
             } else {
                 processPlatedItem(data);
             }
         } catch (err) {
-            errorCount++;
-            if (errorCount <= 5) {
-                console.error(`解析第 ${idx + 1} 行失败。截断位置提示:`, trimmed.substring(trimmed.length - 100), err);
-            }
+            console.error(`解析第${idx+1}行失败:`, trimmed.substring(0, 200), err);
         }
     });
 
     platedFrames.sort((a, b) => a.time - b.time);
     platedTrajMap.forEach((pts, id) => pts.sort((a, b) => a.time - b.time));
-    console.log(`上牌后轨迹解析完成: 成功帧数 ${platedFrames.length}, 放弃损坏行数: ${errorCount}, 车辆ID数 ${platedTrajMap.size}`);
-} function parsePlatedTimeStamp(timeStr) {
-            const parts = timeStr.split(' ');
-            const datePart = parts[0];
-            const timePart = parts[1];
-            const timeParts = timePart.split(':');
-            const ms = timeParts.length >= 4 ? parseInt(timeParts[3]) : 0;
-            const isoStr = `${datePart}T${timeParts[0]}:${timeParts[1]}:${timeParts[2]}.${ms.toString().padStart(3,'0')}+08:00`;
-            return Date.parse(isoStr);
-        }
+    console.log(`上牌后轨迹解析完成: 帧数 ${platedFrames.length}, 车辆ID数 ${platedTrajMap.size}`);
+    if (platedFrames.length > 0) {
+        console.log('首帧时间:', new Date(platedFrames[0].time), '末帧时间:', new Date(platedFrames[platedFrames.length-1].time));
+    }
+}
+// 初始化里程滑动条
+function initMileageSlider() {
+    const slider = document.getElementById('mileageSlider');
+    if (!slider) return;
 
-        document.getElementById('rasterFile').addEventListener('change', e => loadFile(e, 'raster'));
-        document.getElementById('gantryFile').addEventListener('change', e => loadFile(e, 'gantry'));
-        document.getElementById('trajFile').addEventListener('change', e => loadFile(e, 'traj'));
-        document.getElementById('platedFile').addEventListener('change', e => loadFile(e, 'plated'));
+    // 获取数据的实际里程范围（米）
+    let minM = Infinity, maxM = -Infinity;
+    frames.forEach(f => f.vehicles.forEach(v => {
+        if (v.tpointno < minM) minM = v.tpointno;
+        if (v.tpointno > maxM) maxM = v.tpointno;
+    }));
+    if (platedFrames.length) {
+        platedFrames.forEach(f => f.vehicles.forEach(v => {
+            if (v.mileage < minM) minM = v.mileage;
+            if (v.mileage > maxM) maxM = v.mileage;
+        }));
+    }
+    if (minM === Infinity) return;
 
+    slider.min = minM;
+    slider.max = maxM;
+    // 设置初始值为当前相机中心对应的里程
+    const currentCenterM = (canvas.width / 2 - camera.x) / camera.scale;
+    slider.value = Math.min(maxM, Math.max(minM, currentCenterM));
 
+    // 移除旧的监听器，避免重复绑定（使用新函数）
+    slider.removeEventListener('input', slider._listener);
+    const listener = (e) => {
+        const targetM = parseFloat(e.target.value);
+        camera.x = canvas.width / 2 - targetM * camera.scale;
+        if (!isPlaying) draw();
+    };
+    slider.addEventListener('input', listener);
+    slider._listener = listener; // 存储以便后续移除
+        updateRuler();
 
-        function loadFile(event, type) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = e => {
-                const content = e.target.result;
-                if (type === 'raster') { parseRaster(content.split('\n'));
-                    rasterLoaded = true; }
-                if (type === 'gantry') { parseGantry(content.split('\n'));
-                    gantryLoaded = true; }
-                if (type === 'traj') { parseTraj(content.split('\n'));
-                    trajLoaded = true; }
-                if (type === 'plated') { parsePlated(content.split('\n'));
-                    platedLoaded = true; }
-                if (rasterLoaded && gantryLoaded && trajLoaded) checkReady();
-                if (platedLoaded) onPlatedReady();
-            };
-            reader.readAsText(file);
-        }
-
-        function parseRaster(lines) {
-            lines.forEach(line => {
-                if (!line.trim()) return;
-                try {
-                    const safeLine = line.replace(/"ID":(\d+)/g, '"ID":"$1"');
-                    const data = JSON.parse(safeLine);
-                    frames.push({ time: data.TIME, vehicles: data.TDATA });
-                } catch (err) {}
-            });
-            frames.sort((a, b) => a.time - b.time);
-        }
+}
 // 确保 processPlatedItem 存在且健壮
 function processPlatedItem(data) {
     let frameTime;
@@ -453,7 +692,7 @@ function processPlatedItem(data) {
     if (data.time && typeof data.time === 'number') {
         frameTime = data.time;
     } else if (data.timeStamp) {
-        frameTime = parsePlatedTimeStamp(data.timeStamp);
+        frameTime = parseGantryTime(data.timeStamp);
     } else {
         console.warn('忽略无时间戳的上牌条目', data);
         return;
@@ -501,72 +740,6 @@ function processPlatedItem(data) {
     }
     platedFrames.push({ time: frameTime, vehicles, timeStamp: data.timeStamp, pathNum: data.pathNum });
 }
-async function autoLoadAllData() {
-    document.getElementById('loadStatus').innerText = "正在从服务器加载数据...";
-    
-    // 你的所有分片列表
-    const dataFiles = {
-        raster: [
-            'data/Tr_fiber_521_part1.jsonl', 'data/Tr_fiber_521_part2.jsonl',
-            'data/Tr_fiber_521_part3.jsonl', 'data/Tr_fiber_521_part4.jsonl',
-            'data/Tr_fiber_521_part5.jsonl', 'data/Tr_fiber_521_part6.jsonl',
-            'data/Tr_fiber_521_part7.jsonl'
-        ],
-        gantry: [ 
-            'data/Tr_gantry_521_part1.jsonl' 
-        ],
-        traj: [ 
-            'data/Tr_trajectories_521_part1.txt', 'data/Tr_trajectories_521_part2.txt' 
-        ],
-        plated: [ 
-            'data/Tr_merged_small_part1.jsonl', 'data/Tr_merged_small_part2.jsonl',
-            'data/Tr_merged_small_part3.jsonl', 'data/Tr_merged_small_part4.jsonl',
-            'data/Tr_merged_small_part5.jsonl', 'data/Tr_merged_small_part6.jsonl'
-        ]
-    };
-
-    try {
-        // 读取光栅
-        for(let url of dataFiles.raster) {
-            const res = await fetch(url);
-            parseRaster((await res.text()).split('\n'));
-        }
-        rasterLoaded = true;
-        
-        // 读取卡口
-        for(let url of dataFiles.gantry) {
-            const res = await fetch(url);
-            parseGantry((await res.text()).split('\n'));
-        }
-        gantryLoaded = true;
-        
-        // 读取轨迹
-        for(let url of dataFiles.traj) {
-            const res = await fetch(url);
-            parseTraj((await res.text()).split('\n'));
-        }
-        trajLoaded = true;
-        
-        // 读取上牌轨迹
-        for(let url of dataFiles.plated) {
-            const res = await fetch(url);
-            parsePlated((await res.text()).split('\n'));
-        }
-        platedLoaded = true;
-        
-        // 全部加载完成后触发逻辑
-        checkReady();
-        onPlatedReady();
-        document.getElementById('loadStatus').innerText = "全部数据加载完成！";
-    } catch (e) {
-        document.getElementById('loadStatus').innerText = "加载失败：" + e.message;
-        console.error(e);
-    }
-}
-// 页面加载后自动运行
-window.onload = () => {
-    autoLoadAllData();
-};
     document.getElementById('rasterFile').addEventListener('change', e => loadFile(e, 'raster'));
     document.getElementById('gantryFile').addEventListener('change', e => loadFile(e, 'gantry'));
     document.getElementById('trajFile').addEventListener('change', e => loadFile(e, 'traj'));
@@ -576,9 +749,129 @@ window.onload = () => {
         gantryLoaded = false,
         trajLoaded = false,
         platedLoaded = false;
+// 🚀 自动化数据拉取引擎（无损按行、带崩溃拦截保护）
+async function autoLoadAllData() {
+    const statusObj = document.getElementById('loadStatus');
+    statusObj.innerText = "⏳ 正在连接 GitHub 服务器，自动拉取交通流分片...";
+    statusObj.style.color = "#ffb74d";
 
+    // 📦 自动化读取清单：请确保这些文件名与你 GitHub 仓库 data/ 目录下的完全一致
+    const dataFiles = {
+        raster: [
+            'data/Tr_fiber_521_part1.jsonl', 'data/Tr_fiber_521_part2.jsonl',
+            'data/Tr_fiber_521_part3.jsonl', 'data/Tr_fiber_521_part4.jsonl',
+            'data/Tr_fiber_521_part5.jsonl', 'data/Tr_fiber_521_part6.jsonl',
+            'data/Tr_fiber_521_part7.jsonl', 'data/Tr_fiber_521_part8.jsonl',
+            'data/Tr_fiber_521_part9.jsonl'
+        ],
+        gantry: [
+            'data/Tr_gantry_521_part1.jsonl'
+        ],
+        traj: [
+            'data/Tr_trajectories_521_part1.txt', 'data/Tr_trajectories_521_part2.txt',
+            'data/Tr_trajectories_521_part3.txt'
+        ],
+        plated: [
+            // 注意：如果你之前切分成了 15 份，请在这里补齐 part8 到 part15
+            'data/Tr_merged_small_part1.jsonl', 'data/Tr_merged_small_part2.jsonl',
+            'data/Tr_merged_small_part3.jsonl', 'data/Tr_merged_small_part4.jsonl',
+            'data/Tr_merged_small_part5.jsonl', 'data/Tr_merged_small_part6.jsonl',
+            'data/Tr_merged_small_part7.jsonl'
+        ]
+    };
 
+    try {
+        // 1. 读取光栅
+        for (let url of dataFiles.raster) {
+            const res = await fetch(url);
+            if (!res.ok) { console.warn(`[跳过异常分片]: ${url}`); continue; }
+            parseRaster((await res.text()).split('\n'));
+        }
+        rasterLoaded = true;
+
+        // 2. 读取物理卡口
+        for (let url of dataFiles.gantry) {
+            const res = await fetch(url);
+            if (!res.ok) { console.warn(`[跳过异常分片]: ${url}`); continue; }
+            parseGantry((await res.text()).split('\n'));
+        }
+        gantryLoaded = true;
+
+        // 3. 读取预处理轨迹集
+        for (let url of dataFiles.traj) {
+            const res = await fetch(url);
+            if (!res.ok) { console.warn(`[跳过异常分片]: ${url}`); continue; }
+            parseTraj((await res.text()).split('\n'));
+        }
+        trajLoaded = true;
+
+        // 4. 读取上牌后融合轨迹
+        for (let url of dataFiles.plated) {
+            const res = await fetch(url);
+            if (!res.ok) { console.warn(`[跳过异常分片]: ${url}`); continue; }
+            // 使用正则兼容跨平台换行符，且加上断行修复能力
+            let text = await res.text();
+            parsePlated(text.split(/\r?\n/));
+        }
+        platedLoaded = true;
+
+        // 🚀 触发渲染和相机初始化
+        checkReady();
+        if(platedFrames.length > 0) onPlatedReady();
+
+        statusObj.innerText = `✅ 初始化成功! 断面:${uniqueGantries.size} | 车辆:${platedTrajMap.size}`;
+        statusObj.style.color = "#4caf50";
+    } catch (e) {
+        statusObj.innerText = "❌ 自动化拉取失败: " + e.message;
+        statusObj.style.color = "#f44336";
+        console.error("加载链崩溃原因:", e);
+    }
+}
+function loadFile(event, type) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        const content = e.target.result;
+        if (type === 'raster') {
+    parseRaster(content.split('\n'));
+    rasterLoaded = true;
+    console.log('光栅帧数:', frames.length);
+}
+        if (type === 'gantry') { parseGantry(content.split('\n')); gantryLoaded = true; }
+        if (type === 'traj') { parseTraj(content.split('\n')); trajLoaded = true; }
+        // ⭐ 修改此行：使用正则兼容 \r\n 和 \n
+        if (type === 'plated') { parsePlated(content.split(/\r?\n/)); platedLoaded = true; }
+
+        if (rasterLoaded && gantryLoaded && trajLoaded) checkReady();
+        if (platedLoaded) onPlatedReady();
+    };
+    reader.readAsText(file);
+}
+
+   function parseRaster(lines) {
+    frames = [];
+    lines.forEach((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+            const safeLine = trimmed.replace(/"ID":(\d+)/g, '"ID":"$1"');
+            const data = JSON.parse(safeLine);
+            if (data.TIME && data.TDATA && Array.isArray(data.TDATA)) {
+                frames.push({ time: data.TIME, vehicles: data.TDATA });
+            } else {
+                console.warn(`第${idx+1}行缺少必要字段 TIME/TDATA`, data);
+            }
+        } catch (err) {
+            console.error(`解析光栅第${idx+1}行失败:`, trimmed.substring(0, 200), err);
+        }
+    });
+    frames.sort((a, b) => a.time - b.time);
+    console.log(`光栅解析完成：有效帧数 ${frames.length}，时间范围 ${new Date(frames[0]?.time)} - ${new Date(frames[frames.length-1]?.time)}`);
+}
     function parseGantry(lines) {
+        gantries = [];
+        uniqueGantries.clear();
         lines.forEach(line => {
             if (!line.trim()) return;
             try {
@@ -674,6 +967,8 @@ window.onload = () => {
     document.getElementById('loadStatus').innerText =
         `全部加载完成！断面聚合数:${uniqueGantries.size} | 上牌轨迹帧数:${platedFrames.length} | 上牌车辆数:${platedTrajMap.size}`;
     if (!isPlaying) draw(); // 强制重绘
+      initMileageSlider();
+      updateKmSelector();
 }
 function adjustCameraToData() {
     let minM = Infinity, maxM = -Infinity;
@@ -711,8 +1006,10 @@ function checkReady() {
     progressBar.max = maxTime - minTime;
 
     adjustCameraToData(); // ⭐ 使用统一摄像机调整
-    canvas.width = canvas.parentElement.clientWidth - (detailPanel.style.display === 'block' ? 440 : 0) - 10;
+    adjustCanvasWidth();
     draw();
+    initMileageSlider();
+    updateKmSelector();
 }
     function analyzeGhostIntervals() {
         ghostIntervals.clear();
@@ -766,26 +1063,7 @@ function checkReady() {
             if (intervals.length > 0) ghostIntervals.set(id, intervals);
         });
     }
-function shiftTimeBy(deltaMs) {
-    if (frames.length === 0 && gantries.length === 0 && platedFrames.length === 0) return;
-    let newTime = currentTime + deltaMs;
-    if (newTime > maxTime) newTime = maxTime;
-    if (newTime < minTime) newTime = minTime;
-    if (newTime === currentTime) return;
-    currentTime = newTime;
-    if (!isDraggingProgress) progressBar.value = currentTime - minTime;
-    draw();
-    // 如果详情面板打开且处于“截止当前时间”模式，刷新表格
-    if (detailPanel.style.display === 'block') {
-        if (currentDetailGantry) {
-            let mode = document.querySelector('input[name="gantryViewMode"]:checked')?.value;
-            if (mode === 'upToNow') renderGantryTable('upToNow');
-        } else if (currentDetailPlatedVehicle) {
-            let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
-            if (mode === 'upToNow') renderPlatedTable('upToNow');
-        }
-    }
-}
+
     function isGhostCurrently(id, currTime) {
         if (!ghostIntervals.has(id)) return false;
         let intervals = ghostIntervals.get(id);
@@ -866,6 +1144,7 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         }
 
         ctx.restore();
+        updateRuler();
         updateUI();
     }
     function drawGantriesLower() {
@@ -928,22 +1207,54 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         }
     }
 
-    function drawXAxis(minX, maxX, centerY) {
-        const yBase = centerY + 130;
-        ctx.strokeStyle = '#fff';
-        ctx.fillStyle = '#aaa';
-        ctx.font = `${12/camera.scale}px Arial`;
-        ctx.textAlign = 'center';
-        const step = 100;
-        const startX = Math.floor(minX / step) * step;
-        for (let x = startX; x <= maxX; x += step) {
-            ctx.beginPath();
-            ctx.moveTo(x, yBase);
-            ctx.lineTo(x, yBase + 10);
-            ctx.stroke();
-            ctx.fillText(x + ' m', x, yBase + 22);
-        }
+   function drawXAxis(minX, maxX, centerY) {
+    const yBase = centerY + 130;
+    const yTop = yBase - 15;
+    const yBottom = yBase + 30;
+
+    // 高亮特定里程范围 [1110000, 1130000]（仅在可视范围内绘制）
+    const highlightStart = 1110000;
+    const highlightEnd = 1130000;
+    if (maxX > highlightStart && minX < highlightEnd) {
+        const left = Math.max(minX, highlightStart);
+        const right = Math.min(maxX, highlightEnd);
+        ctx.fillStyle = 'rgba(255, 100, 100, 0.3)';
+        ctx.fillRect(left, yTop, right - left, yBottom - yTop);
+        // 添加边框标注
+        ctx.strokeStyle = '#ff6666';
+        ctx.lineWidth = 1.5 / camera.scale;
+        ctx.setLineDash([5, 5]);
+        ctx.strokeRect(left, yTop, right - left, yBottom - yTop);
+        ctx.setLineDash([]);
     }
+
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#aaa';
+    ctx.font = `${12 / camera.scale}px Arial`;
+    ctx.textAlign = 'center';
+
+    const step = getOptimalStep();
+    const startX = Math.floor(minX / step) * step;
+    for (let x = startX; x <= maxX; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, yBase);
+        ctx.lineTo(x, yBase + 10);
+        ctx.stroke();
+        ctx.fillText(x + ' m', x, yBase + 22);
+    }
+}
+
+// 新增辅助函数：根据可视范围自动选择刻度步长
+function getOptimalStep() {
+    const visibleRange = canvas.width / camera.scale; // 当前可见宽度（米）
+    if (visibleRange < 30) return 1;
+    if (visibleRange < 60) return 5;
+    if (visibleRange < 150) return 10;
+    if (visibleRange < 400) return 50;
+    if (visibleRange < 1000) return 100;
+    if (visibleRange < 2500) return 200;
+    return 500;
+}
 
     function drawGantries() {
         const flashDuration = 300;
@@ -951,9 +1262,9 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             const isDir1 = g.direction === 1;
             const yOffset = isDir1 ? -100 : 0;
             const yHeight = 100;
-            const isTracked = currentDetailGantry &&
-                currentDetailGantry.mileage === g.mileage &&
-                currentDetailGantry.direction === g.direction;
+ const isTracked = currentDetailGantry &&
+                          currentDetailGantry.mileage === g.mileage &&
+                          currentDetailGantry.direction === g.direction;
             ctx.fillStyle = isTracked ? '#81d4fa' : '#4fc3f7';
             ctx.fillRect(g.mileage, yOffset, (isTracked ? 4 : 2) / camera.scale, yHeight);
             let deviceHint = g.deviceIds.length > 1 ? ` (${g.deviceIds.length}个设备)` : '';
@@ -996,8 +1307,9 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             const x = v.tpointno;
             const isGhost = isGhostCurrently(v.ID, currentTime);
             ctx.beginPath();
-            ctx.arc(x, y, 6 / camera.scale, 0, Math.PI * 2);
-            const isTracked = currentDetailVehicle && currentDetailVehicle.ID === v.ID;
+            ctx.arc(x, y,VEHICLE_RADIUS / camera.scale, 0, Math.PI * 2);
+const isTracked = (currentDetailVehicle && currentDetailVehicle.ID === v.ID) ||
+                  (currentLeftDetailVehicle && currentLeftDetailVehicle.ID === v.ID);
             if (isGhost) {
                 ctx.shadowColor = '#e040fb';
                 ctx.shadowBlur = 20 / camera.scale;
@@ -1016,10 +1328,9 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             }
             const displayId = String(v.ID).slice(-6);
             ctx.fillStyle = isGhost ? '#e040fb' : (isTracked ? '#4fc3f7' : '#fff');
-            ctx.font = `${isTracked ? 12 : 10}/camera.scale}px Arial`;
+            ctx.font = `${isTracked ? 16 : 14}/camera.scale}px Arial`;
             ctx.textAlign = 'left';
-            ctx.fillText(`ID:${displayId} (${Math.round(v.speed)})`, x + 10 / camera.scale, y + 4 / camera
-                .scale);
+ctx.fillText(`ID:${displayId} (${Math.round(v.speed)})`, x + 14 / camera.scale, y + 6 / camera.scale);
         });
     }
 
@@ -1034,7 +1345,7 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             const isTracked = currentDetailPlatedVehicle && String(currentDetailPlatedVehicle.id) === String(v
                 .id);
             ctx.beginPath();
-            ctx.arc(x, y, 6 / camera.scale, 0, Math.PI * 2);
+            ctx.arc(x, y, VEHICLE_RADIUS / camera.scale, 0, Math.PI * 2);
             if (hasPlate) {
                 ctx.fillStyle = isDir1 ? '#FFD54F' : '#FF8A65';
             } else {
@@ -1049,43 +1360,98 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             const displayLabel = hasPlate ? v.plateNo : '无车牌';
             const displayId = String(v.id).slice(-6);
             ctx.fillStyle = isTracked ? '#4fc3f7' : (hasPlate ? '#FFE082' : '#ccc');
-            ctx.font = `${isTracked ? 12 : 10}/camera.scale}px Arial`;
+            ctx.font = `${isTracked ? 16 : 14}/camera.scale}px Arial`;
             ctx.textAlign = 'left';
-            ctx.fillText(`${displayLabel} ID:${displayId} (${Math.round(v.speed)})`, x + 10 / camera.scale, y +
-                4 / camera.scale);
+ctx.fillText(`${displayLabel} ID:${displayId} (${Math.round(v.speed)})`, x + 14 / camera.scale, y + 6 / camera.scale);
         });
     }
 
-    function closeDetailPanel() {
-        detailPanel.style.display = 'none';
-        currentDetailVehicle = null;
-        currentDetailGantry = null;
-        currentDetailPlatedVehicle = null;
-        canvas.width = canvas.parentElement.clientWidth - 10;
-        if (!isPlaying) draw();
-    }
+function closeDetailPanel() {
+    detailPanel.style.display = 'none';
+    currentDetailVehicle = null;
+    currentDetailGantry = null;
+    currentDetailPlatedVehicle = null;
+    adjustCanvasWidth();
+    if (!isPlaying) draw();
+}
 
     function switchVehicleViewMode() {
         let mode = document.querySelector('input[name="vehicleViewMode"]:checked').value;
         renderVehicleTable(mode);
     }
 
-    function showTrajectoryDetails(vehicle) {
-        isPlaying = false;
-        document.getElementById('btnPlay').innerText = '播放';
-        currentDetailVehicle = vehicle;
-        currentDetailGantry = null;
-        currentDetailPlatedVehicle = null;
-        detailPanel.style.display = 'block';
-        document.getElementById('vehicleToggleGroup').style.display = 'flex';
-        document.getElementById('gantryToggleGroup').style.display = 'none';
-        document.getElementById('platedToggleGroup').style.display = 'none';
-        canvas.width = canvas.parentElement.clientWidth - 440;
-        draw();
-        document.querySelector('input[name="vehicleViewMode"][value="near"]').checked = true;
-        renderVehicleTable('near');
+function showTrajectoryDetails(vehicle) {
+    isPlaying = false;
+    document.getElementById('btnPlay').innerText = '播放';
+    currentLeftDetailVehicle = vehicle;           // 存入左侧变量
+    // 不干扰右侧任何 currentDetailXxx
+    leftDetailPanel.style.display = 'block';
+    isLeftDetailOpen = true;
+    adjustCanvasWidth();
+    draw();
+    // 默认选择“仅看卡口附近”
+    document.querySelector('input[name="leftVehicleViewMode"][value="near"]').checked = true;
+    renderLeftVehicleTable('near');
+}
+function renderLeftVehicleTable(mode) {
+    if (!currentLeftDetailVehicle) return;
+    const vId = currentLeftDetailVehicle.ID;
+    let points = preprocessedTraj.get(String(vId));
+    const descObj = document.getElementById('leftDetailDesc');
+    document.getElementById('leftDetailTitle').innerText = `车辆追踪 ID: ${vId}`;
+    let html = `<thead><tr><th>时间</th><th>里程(m)</th><th>车道</th><th>速度</th></tr></thead><tbody>`;
+    if (!points) {
+        descObj.innerText = "未在预处理轨迹集中找到该车辆数据。";
+        html += `<tr><td colspan="4">无轨迹数据</td></tr></tbody>`;
+        document.getElementById('leftDetailTable').innerHTML = html;
+        return;
     }
-
+    // 查找最近断面（用于“仅看卡口附近”）
+    let nearestGantry = null;
+    let minDiff = Infinity;
+    uniqueGantries.forEach(g => {
+        if (g.direction === currentLeftDetailVehicle.direct) {
+            let diff = Math.abs(currentLeftDetailVehicle.tpointno - g.mileage);
+            if (diff < minDiff) { minDiff = diff; nearestGantry = g; }
+        }
+    });
+    if (mode === 'near') {
+        descObj.innerText = nearestGantry ?
+            `捕捉坐标: ${currentLeftDetailVehicle.tpointno}m，显示断面 ${nearestGantry.mileage} 前后200m范围:` :
+            `显示该车辆的所有轨迹点:`;
+        points.forEach(pt => {
+            let isNear = nearestGantry ? (Math.abs(pt.mileage - nearestGantry.mileage) <= 200) : true;
+            if (isNear) {
+                let isCurrentPt = Math.abs(pt.timeMs - currentLeftDetailVehicle.time) <= 100 || Math.abs(pt.mileage - currentLeftDetailVehicle.tpointno) < 1;
+                html += `<tr style="${isCurrentPt ? 'background: #004d40; font-weight:bold;' : ''}">
+                    <td>${pt.timeStr.split(' ')[1]}</td><td>${pt.mileage}</td><td>${pt.wayno}</td><td>${pt.speed}</td>
+                </tr>`;
+            }
+        });
+    } else {
+        descObj.innerText = `全网轨迹追踪，时间差>5秒自动切分段落:`;
+        let segmentId = 1, lastTime = 0;
+        points.forEach((pt, idx) => {
+            if (idx === 0) html += `<tr class="seg-header"><td colspan="4">⚑ 轨迹段落 ${segmentId} 开始</td></tr>`;
+            else if (pt.timeMs - lastTime > 5000) {
+                segmentId++;
+                let gapSec = ((pt.timeMs - lastTime) / 1000).toFixed(1);
+                html += `<tr class="seg-header"><td colspan="4">⚑ 轨迹段落 ${segmentId} (中断 ${gapSec}秒)</td></tr>`;
+            }
+            lastTime = pt.timeMs;
+            let isCurrentPt = Math.abs(pt.mileage - currentLeftDetailVehicle.tpointno) < 1;
+            html += `<tr style="${isCurrentPt ? 'background: #004d40; font-weight:bold;' : ''}">
+                <td>${pt.timeStr.split(' ')[1]}</td><td>${pt.mileage}</td><td>${pt.wayno}</td><td>${pt.speed}</td>
+            </tr>`;
+        });
+    }
+    html += `</tbody>`;
+    document.getElementById('leftDetailTable').innerHTML = html;
+}
+function switchLeftVehicleViewMode() {
+    let mode = document.querySelector('input[name="leftVehicleViewMode"]:checked').value;
+    renderLeftVehicleTable(mode);
+}
     function renderVehicleTable(mode) {
         if (!currentDetailVehicle) return;
         const vId = currentDetailVehicle.ID;
@@ -1165,7 +1531,7 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         document.getElementById('vehicleToggleGroup').style.display = 'none';
         document.getElementById('gantryToggleGroup').style.display = 'flex';
         document.getElementById('platedToggleGroup').style.display = 'none';
-        canvas.width = canvas.parentElement.clientWidth - 440;
+        adjustCanvasWidth();
         draw();
         document.querySelector('input[name="gantryViewMode"][value="upToNow"]').checked = true;
         renderGantryTable('upToNow');
@@ -1219,7 +1585,46 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             }, 0);
         }
     }
+// 更新下拉框的选项（基于数据范围）
+function updateKmSelector() {
+    let minM = Infinity, maxM = -Infinity;
+    frames.forEach(f => f.vehicles.forEach(v => {
+        if (v.tpointno < minM) minM = v.tpointno;
+        if (v.tpointno > maxM) maxM = v.tpointno;
+    }));
+    if (platedFrames.length) {
+        platedFrames.forEach(f => f.vehicles.forEach(v => {
+            if (v.mileage < minM) minM = v.mileage;
+            if (v.mileage > maxM) maxM = v.mileage;
+        }));
+    }
+    if (minM === Infinity) return;
+    const startKm = Math.floor(minM / 1000);
+    const endKm = Math.ceil(maxM / 1000);
+    const select = document.getElementById('kmSelector');
+    select.innerHTML = '<option value="">-- 选择公里数 --</option>';
+    for (let km = startKm; km <= endKm; km++) {
+        const val = km * 1000;
+        const option = document.createElement('option');
+        option.value = val;
+        option.text = `${km} km (${val}m)`;
+        select.appendChild(option);
+    }
+    document.getElementById('kmRangeInfo').innerText = `里程范围 ${Math.floor(minM)}m ~ ${Math.ceil(maxM)}m`;
+}
 
+// 跳转到指定里程（将相机水平中心对齐）
+function gotoKilometer(meterVal) {
+    if (!meterVal) return;
+    const targetX = parseFloat(meterVal);
+    camera.x = canvas.width / 2 - targetX * camera.scale;
+    if (!isPlaying) draw();
+}
+
+// 在 checkReady() 和 onPlatedReady() 中调用 updateKmSelector()
+// 例如在 checkReady 末尾添加：
+// updateKmSelector();
+// 在 onPlatedReady 末尾同样添加 updateKmSelector();
     window.toggleGantryEvent = function(idx) {
         let row = document.getElementById(`gantry-ev-${idx}`);
         row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
@@ -1241,7 +1646,7 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         document.getElementById('vehicleToggleGroup').style.display = 'none';
         document.getElementById('gantryToggleGroup').style.display = 'none';
         document.getElementById('platedToggleGroup').style.display = 'flex';
-        canvas.width = canvas.parentElement.clientWidth - 440;
+        adjustCanvasWidth();
         draw();
         document.querySelector('input[name="platedViewMode"][value="upToNow"]').checked = true;
         renderPlatedTable('upToNow');
@@ -1343,6 +1748,7 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         clickStart.x = e.offsetX;
         clickStart.y = e.offsetY;
         canvas.style.cursor = 'grabbing';
+        updateRuler();
     });
 
     canvas.addEventListener('mousemove', e => {
@@ -1375,6 +1781,30 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
                 canvas.style.cursor = 'grab';
                 tooltip.style.display = 'none';
             }
+            // 检查是否悬浮在里程轴上（上方道路的轴线）
+const yBaseTop = (0 + 130);  // 上路轴线 y 坐标（逻辑坐标）
+const threshold = 15 / camera.scale; // 容许的点击范围（像素转逻辑单位）
+if (Math.abs(logicY - yBaseTop) < threshold) {
+    // 显示上路里程提示
+    const mileage = Math.round(logicX);
+    tooltip.innerText = `里程: ${mileage} m`;
+    tooltip.style.left = (e.clientX + 15) + 'px';
+    tooltip.style.top = (e.clientY + 15) + 'px';
+    tooltip.style.display = 'block';
+    canvas.style.cursor = 'pointer';
+    return; // 优先显示里程提示，不覆盖其他
+}
+// 检查下方道路的轴线
+const yBaseBottom = (ROAD2_CENTER_Y + 130);
+if (Math.abs(logicY - yBaseBottom) < threshold) {
+    const mileage = Math.round(logicX);
+    tooltip.innerText = `里程: ${mileage} m`;
+    tooltip.style.left = (e.clientX + 15) + 'px';
+    tooltip.style.top = (e.clientY + 15) + 'px';
+    tooltip.style.display = 'block';
+    canvas.style.cursor = 'pointer';
+    return;
+}
         }
     });
 
@@ -1422,6 +1852,10 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
                 if (mode === 'upToNow') renderPlatedTable('upToNow');
             }
         }
+        if (isLeftDetailOpen && currentLeftDetailVehicle) {
+    let mode = document.querySelector('input[name="leftVehicleViewMode"]:checked')?.value;
+    renderLeftVehicleTable(mode);
+}
         if (currentTime >= maxTime && isPlaying) {
             isPlaying = false;
             document.getElementById('btnPlay').innerText = '播放';
@@ -1463,6 +1897,10 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
             let mode = document.querySelector('input[name="platedViewMode"]:checked')?.value;
             if (mode === 'upToNow') renderPlatedTable('upToNow');
         }
+        if (isLeftDetailOpen && currentLeftDetailVehicle) {
+    let mode = document.querySelector('input[name="leftVehicleViewMode"]:checked')?.value;
+    renderLeftVehicleTable(mode);
+}
     });
 
     canvas.addEventListener('wheel', e => {
@@ -1478,7 +1916,12 @@ drawGantriesLower();  // 新增：下方道路显示断面标记
         canvas.style.cursor = (getHitVehicle(logicX, logicY) || getHitGantry(logicX, logicY) || getHitPlatedVehicle(
             logicX, logicY)) ? 'pointer' : (isDragging ? 'grabbing' : 'grab');
         if (!isPlaying) draw();
+        updateRuler();
     });
+    // 🔄 挂载页面生命周期，开屏免人工一键拉取
+    window.onload = () => {
+        autoLoadAllData();
+    };
 </script>
 </body>
 </html>
